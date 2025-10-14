@@ -4,7 +4,7 @@ Code analysis agent using Gemini CLI.
 import json
 import os
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import Settings
 from models import AnalysisReport
@@ -39,7 +39,7 @@ class CodeAnalysisAgent:
         """
         try:
             result = subprocess.run(
-                ['gemini', '-p', prompt, '--output-format', 'json'],
+                ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
                 capture_output=True,
                 text=True,
                 timeout=120,  # 2 minute timeout
@@ -107,15 +107,12 @@ class CodeAnalysisAgent:
             code_directory
         )
 
-        # Step 4: Analyze key files for feature implementation
-        analysis = self._analyze_features(
+        # Step 4: Analyze key files for feature implementation and generate execution plan
+        analysis, execution_plan = self._analyze_features(
             problem_description,
             key_files,
             code_directory
         )
-
-        # Step 5: Generate execution plan
-        execution_plan = self._generate_execution_plan(code_directory)
 
         return AnalysisReport(
             project_structure=project_structure,
@@ -216,9 +213,9 @@ Return ONLY a JSON array of file paths, nothing else. Example format:
         problem_description: str,
         key_files: List[str],
         base_directory: str
-    ) -> List[Dict]:
+    ) -> Tuple[List[Dict], str]:
         """
-        Analyze key files to locate feature implementations.
+        Analyze key files to locate feature implementations and generate execution plan.
 
         Args:
             problem_description: Natural language description
@@ -226,7 +223,7 @@ Return ONLY a JSON array of file paths, nothing else. Example format:
             base_directory: Base directory path
 
         Returns:
-            List of feature analysis dictionaries
+            Tuple of (feature analysis list, execution plan string)
         """
         # Build context from key files
         file_contents = []
@@ -236,20 +233,37 @@ Return ONLY a JSON array of file paths, nothing else. Example format:
             file_contents.append(f"=== File: {rel_path} ===\n{content}\n")
 
         combined_context = "\n".join(file_contents)
+        
+        # Get list of files in the project root for execution plan context
+        root_files = []
+        try:
+            root_files = [f for f in os.listdir(base_directory) 
+                         if os.path.isfile(os.path.join(base_directory, f))][:20]
+        except Exception:
+            pass
 
-        prompt = f"""You are a code analysis expert. Analyze the following codebase to identify where specific features are implemented.
+        prompt = f"""You are a code analysis expert. Analyze the following codebase to identify where specific features are implemented and provide execution instructions.
 
 PROJECT FEATURES TO IMPLEMENT:
 {problem_description}
+
+PROJECT ROOT FILES:
+{', '.join(root_files)}
 
 CODEBASE CONTENTS:
 {combined_context}
 
 TASK:
-For each feature mentioned in the problem description, identify:
-1. Which files contain the implementation
-2. Which functions/methods implement the feature
-3. The line numbers where the implementation occurs
+1. For each feature mentioned in the problem description, identify:
+   - Which files contain the implementation
+   - Which functions/methods implement the feature
+   - The line numbers where the implementation occurs
+
+2. Analyze the project configuration files (package.json, requirements.txt, etc.) and provide clear instructions on how to:
+   - Install dependencies
+   - Run the project
+   - Run tests (if applicable)
+   - Build the project (if applicable)
 
 Return your analysis as a JSON object with this EXACT structure:
 {{
@@ -264,7 +278,8 @@ Return your analysis as a JSON object with this EXACT structure:
         }}
       ]
     }}
-  ]
+  ],
+  "execution_plan": "Step-by-step instructions for running this project, including dependency installation, running commands, and any relevant scripts."
 }}
 
 IMPORTANT:
@@ -273,6 +288,8 @@ IMPORTANT:
 - Use relative file paths
 - If a feature spans multiple files, include all relevant locations
 - Feature descriptions should be clear and concise
+- Execution plan should be practical and based on the actual project configuration files
+- Include specific commands (npm install, pip install, etc.) based on what you see in the codebase
 
 Return ONLY valid JSON, no additional text.
 """
@@ -287,73 +304,12 @@ Return ONLY valid JSON, no additional text.
             if start != -1 and end > start:
                 json_str = response_text[start:end]
                 analysis_data = json.loads(json_str)
-                return analysis_data.get("feature_analysis", [])
+                feature_analysis = analysis_data.get("feature_analysis", [])
+                execution_plan = analysis_data.get("execution_plan", "No execution plan provided")
+                return feature_analysis, execution_plan
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON: {e}")
             print(f"Response: {response_text}")
 
-        # Fallback: return empty analysis
-        return []
-
-    def _generate_execution_plan(self, code_directory: str) -> str:
-        """
-        Generate suggestions for running the project.
-
-        Args:
-            code_directory: Path to code directory
-
-        Returns:
-            Execution plan as string
-        """
-        # Check for common configuration files
-        config_files_to_check = [
-            'package.json',
-            'requirements.txt',
-            'Pipfile',
-            'pom.xml',
-            'build.gradle',
-            'Cargo.toml',
-            'go.mod',
-            'Gemfile',
-            'composer.json'
-        ]
-
-        found_configs = []
-        for config_file in config_files_to_check:
-            config_path = os.path.join(code_directory, config_file)
-            if os.path.exists(config_path):
-                found_configs.append(config_file)
-
-        # Generate execution suggestions based on found files
-        if 'package.json' in found_configs:
-            try:
-                with open(os.path.join(code_directory, 'package.json'), 'r') as f:
-                    package_data = json.load(f)
-                    scripts = package_data.get('scripts', {})
-
-                    suggestions = "To run this project:\n"
-                    suggestions += "1. Install dependencies: `npm install` or `yarn install`\n"
-
-                    if 'start' in scripts:
-                        suggestions += "2. Start the application: `npm start` or `yarn start`\n"
-                    if 'dev' in scripts or 'start:dev' in scripts:
-                        dev_cmd = 'dev' if 'dev' in scripts else 'start:dev'
-                        suggestions += f"2. Start in development mode: `npm run {dev_cmd}` or `yarn {dev_cmd}`\n"
-                    if 'build' in scripts:
-                        suggestions += "3. Build the project: `npm run build` or `yarn build`\n"
-
-                    return suggestions
-            except Exception:
-                pass
-
-        if 'requirements.txt' in found_configs or 'Pipfile' in found_configs:
-            suggestions = "To run this Python project:\n"
-            if 'requirements.txt' in found_configs:
-                suggestions += "1. Install dependencies: `pip install -r requirements.txt`\n"
-            else:
-                suggestions += "1. Install dependencies: `pipenv install`\n"
-            suggestions += "2. Run the application (check for main.py or app.py)\n"
-            return suggestions
-
-        # Generic fallback
-        return "Check the project's README.md or documentation for specific instructions on building and running the project."
+        # Fallback: return empty analysis and default plan
+        return [], "Unable to generate execution plan. Please check project documentation."

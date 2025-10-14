@@ -365,6 +365,36 @@
             margin-top: 5px;
         }
 
+        .codebase-info {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 12px 15px;
+            margin-top: 15px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+
+        .codebase-path {
+            font-family: monospace;
+            background: #fff;
+            padding: 4px 8px;
+            border-radius: 3px;
+            color: #333;
+            display: inline-block;
+            margin-top: 5px;
+        }
+
+        .cleanup-btn {
+            background: linear-gradient(45deg, #ff5722, #f44336);
+            color: white;
+            margin-top: 15px;
+        }
+
+        .cleanup-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(255, 87, 34, 0.3);
+        }
+
         @media (max-width: 768px) {
             .container {
                 margin: 10px;
@@ -448,7 +478,7 @@
         
         // Store analysis result globally
         let currentAnalysis = null;
-        let uploadedZipPath = null;
+        let codebasePath = null;
 
         // File upload handling
         fileInput.addEventListener('change', function(e) {
@@ -521,8 +551,11 @@
                     throw new Error(result.detail || 'Analysis failed');
                 }
 
-                // Store analysis result
+                // Store analysis result and codebase path
                 currentAnalysis = result;
+                codebasePath = result.codebase_path || null;
+                
+                console.log('Analysis complete. Codebase path:', codebasePath);
                 
                 // Show success result
                 resultBox.classList.remove('error');
@@ -635,7 +668,22 @@
                 return '';
             }
             
-            return `
+            let html = '';
+            
+            // Show codebase path info if available
+            if (codebasePath) {
+                html += `
+                    <div class="codebase-info">
+                        <strong>ℹ️ Codebase extracted to:</strong>
+                        <div class="codebase-path">${codebasePath}</div>
+                        <div style="margin-top: 8px; font-size: 0.85rem; color: #666;">
+                            Click "Run Workflow & Implement" to automatically implement all features with tests.
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += `
                 <div class="action-buttons">
                     <button id="runWorkflowBtn" class="action-btn run-workflow-btn">
                         🚀 Run Workflow & Implement
@@ -645,6 +693,8 @@
                     </button>
                 </div>
             `;
+            
+            return html;
         }
 
         async function runWorkflow() {
@@ -653,17 +703,19 @@
                 return;
             }
 
-            const runBtn = document.getElementById('runWorkflowBtn');
-            const baseDirectory = prompt('Enter base directory for the codebase:', './temp');
-            
-            if (!baseDirectory) {
+            if (!codebasePath) {
+                alert('Codebase path not available. Please re-analyze the code.');
                 return;
             }
+
+            const runBtn = document.getElementById('runWorkflowBtn');
 
             // Disable button and show loading
             runBtn.disabled = true;
             runBtn.textContent = '⏳ Running workflow...';
             loading.style.display = 'block';
+
+            console.log('Starting workflow with codebase path:', codebasePath);
 
             try {
                 const response = await fetch('/api/run-and-test', {
@@ -673,7 +725,7 @@
                     },
                     body: JSON.stringify({
                         analysis_report: currentAnalysis,
-                        base_directory: baseDirectory,
+                        base_directory: codebasePath,
                         max_retries: 3
                     })
                 });
@@ -812,10 +864,72 @@
             
             html += `
                     </div>
+                    
+                    <div class="action-buttons">
+                        <button id="cleanupBtn" class="action-btn cleanup-btn">
+                            🗑️ Cleanup Temporary Files
+                        </button>
+                    </div>
                 </div>
             `;
             
+            // Add cleanup button event listener
+            setTimeout(() => {
+                const cleanupBtn = document.getElementById('cleanupBtn');
+                if (cleanupBtn) {
+                    cleanupBtn.addEventListener('click', cleanupCodebase);
+                }
+            }, 100);
+            
             return html;
+        }
+
+        async function cleanupCodebase() {
+            if (!codebasePath) {
+                alert('No codebase path to cleanup');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to delete the temporary codebase at:\n${codebasePath}`)) {
+                return;
+            }
+
+            const cleanupBtn = document.getElementById('cleanupBtn');
+            if (cleanupBtn) {
+                cleanupBtn.disabled = true;
+                cleanupBtn.textContent = '⏳ Cleaning up...';
+            }
+
+            try {
+                const formData = new FormData();
+                formData.append('codebase_path', codebasePath);
+
+                const response = await fetch('/api/cleanup', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Cleanup failed');
+                }
+
+                alert('✅ Temporary files cleaned up successfully!');
+                codebasePath = null;
+                
+                if (cleanupBtn) {
+                    cleanupBtn.textContent = '✅ Cleaned up';
+                    cleanupBtn.disabled = true;
+                }
+
+            } catch (error) {
+                alert(`Cleanup Error: ${error.message}`);
+                if (cleanupBtn) {
+                    cleanupBtn.disabled = false;
+                    cleanupBtn.textContent = '🗑️ Cleanup Temporary Files';
+                }
+            }
         }
 
         function downloadAnalysis() {

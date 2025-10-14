@@ -101,11 +101,11 @@ async def health_check():
     }
 
 
-@app.post("/api/analyze", response_model=AnalysisReport)
+@app.post("/api/analyze")
 async def analyze_code(
     problem_description: str = Form(..., description="Natural language description of features"),
     code_zip: UploadFile = File(..., description="Zip file containing the source code")
-) -> AnalysisReport:
+):
     """
     Analyze a codebase and generate a feature location report.
 
@@ -114,7 +114,7 @@ async def analyze_code(
         code_zip: Zip file containing the complete source code
 
     Returns:
-        AnalysisReport with feature analysis and execution plan
+        AnalysisReport with feature analysis, execution plan, and codebase_path
     """
     temp_zip_path = None
     temp_extract_dir = None
@@ -156,7 +156,11 @@ async def analyze_code(
             code_directory=temp_extract_dir
         )
 
-        return report
+        # Convert to dict and add codebase path
+        report_dict = report.model_dump()
+        report_dict['codebase_path'] = temp_extract_dir
+        
+        return report_dict
 
     except HTTPException:
         raise
@@ -167,18 +171,12 @@ async def analyze_code(
             detail=f"Error analyzing code: {str(e)}"
         )
     finally:
-        # Cleanup temporary files
+        # Cleanup temporary ZIP file only (keep extracted directory for workflow)
         if temp_zip_path and os.path.exists(temp_zip_path):
             try:
                 os.remove(temp_zip_path)
             except Exception as e:
                 print(f"Error removing temp zip: {e}")
-
-        if temp_extract_dir and os.path.exists(temp_extract_dir):
-            try:
-                shutil.rmtree(temp_extract_dir)
-            except Exception as e:
-                print(f"Error removing temp directory: {e}")
 
 
 @app.post("/api/analyze-and-implement")
@@ -363,6 +361,49 @@ async def run_and_test(request: RunAndTestRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Error running workflow: {str(e)}"
+        )
+
+
+@app.post("/api/cleanup")
+async def cleanup_codebase(codebase_path: str = Form(...)):
+    """
+    Cleanup temporary codebase directory.
+    
+    Args:
+        codebase_path: Path to the temporary codebase directory to cleanup
+        
+    Returns:
+        Success message
+    """
+    try:
+        if not codebase_path or not os.path.exists(codebase_path):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid or non-existent path: {codebase_path}"
+            )
+        
+        # Security check: only allow cleanup of temp directories
+        if not codebase_path.startswith(settings.temp_dir):
+            raise HTTPException(
+                status_code=403,
+                detail="Can only cleanup temporary directories"
+            )
+        
+        # Remove the directory
+        shutil.rmtree(codebase_path)
+        
+        return {
+            "success": True,
+            "message": f"Cleaned up codebase at {codebase_path}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error cleaning up codebase: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error cleaning up: {str(e)}"
         )
 
 

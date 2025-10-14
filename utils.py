@@ -4,6 +4,7 @@ Utility functions for file handling and code extraction.
 import os
 import zipfile
 import tempfile
+import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -11,6 +12,9 @@ from typing import Dict, List, Tuple
 def extract_zip(zip_path: str, extract_to: str) -> str:
     """
     Extract a zip file to a directory.
+    
+    If the extracted content is a single folder, moves its contents to the root
+    of the extraction directory to avoid unnecessary nesting.
 
     Args:
         zip_path: Path to the zip file
@@ -21,6 +25,40 @@ def extract_zip(zip_path: str, extract_to: str) -> str:
     """
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to)
+    
+    # Check if extracted content is just a single folder
+    extracted_items = os.listdir(extract_to)
+    
+    # If there's only one item and it's a directory, flatten it
+    if len(extracted_items) == 1:
+        single_item = extracted_items[0]
+        single_item_path = os.path.join(extract_to, single_item)
+        
+        if os.path.isdir(single_item_path):
+            # This is a single folder - move all its contents up one level
+            temp_dir = tempfile.mkdtemp(dir=os.path.dirname(extract_to))
+            
+            try:
+                # Move all contents from the nested folder to temp
+                for item in os.listdir(single_item_path):
+                    src = os.path.join(single_item_path, item)
+                    dst = os.path.join(temp_dir, item)
+                    shutil.move(src, dst)
+                
+                # Remove the now-empty nested folder
+                shutil.rmtree(single_item_path)
+                
+                # Move everything from temp to the extraction directory
+                for item in os.listdir(temp_dir):
+                    src = os.path.join(temp_dir, item)
+                    dst = os.path.join(extract_to, item)
+                    shutil.move(src, dst)
+                
+            finally:
+                # Clean up temp directory
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+    
     return extract_to
 
 
