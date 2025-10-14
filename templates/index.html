@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Analysis Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .form-container {
+            padding: 40px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+            font-size: 1rem;
+        }
+
+        .form-group textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 1rem;
+            resize: vertical;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            font-family: inherit;
+        }
+
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .file-upload {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-upload input[type="file"] {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .file-upload-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            background: #fafafa;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .file-upload-label:hover {
+            border-color: #667eea;
+            background: #f0f3ff;
+        }
+
+        .file-upload-label.has-file {
+            border-color: #28a745;
+            background: #f0fff4;
+        }
+
+        .file-upload-icon {
+            margin-right: 10px;
+            font-size: 1.5rem;
+        }
+
+        .file-upload-text {
+            font-size: 1rem;
+            color: #666;
+        }
+
+        .file-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e8f5e8;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 15px 30px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result-container {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .result-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 5px solid #667eea;
+        }
+
+        .result-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .result-content {
+            background: white;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+
+        .error {
+            background: #fee;
+            border-left-color: #dc3545;
+        }
+
+        .error .result-title {
+            color: #dc3545;
+        }
+
+        .note {
+            background: #f0f7ff;
+            border: 1px solid #b8daff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            color: #004085;
+        }
+
+        .note-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .form-container {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Code Analysis Agent</h1>
+            <p>AI-powered feature location and code analysis</p>
+        </div>
+
+        <div class="form-container">
+            <div class="note">
+                <div class="note-title">How it works:</div>
+                Upload your source code as a ZIP file and describe the features you want to implement or locate.
+                The AI will analyze your codebase and provide detailed insights about where and how to implement your features.
+            </div>
+
+            <form id="analysisForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="problem_description">Feature Description</label>
+                    <textarea
+                        id="problem_description"
+                        name="problem_description"
+                        placeholder="Describe the features you want to implement or locate in your codebase. Be as specific as possible about the functionality, user interactions, and technical requirements."
+                        required
+                    ></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="code_zip">Source Code (ZIP file)</label>
+                    <div class="file-upload">
+                        <input type="file" id="code_zip" name="code_zip" accept=".zip" required>
+                        <label for="code_zip" class="file-upload-label" id="fileLabel">
+                            <span class="file-upload-icon">📁</span>
+                            <span class="file-upload-text">Click to select ZIP file or drag and drop</span>
+                        </label>
+                        <div class="file-info" id="fileInfo"></div>
+                    </div>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submitBtn">Analyze Code</button>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Analyzing your codebase... This may take a few moments.</p>
+            </div>
+
+            <div class="result-container" id="resultContainer">
+                <div class="result-box" id="resultBox">
+                    <div class="result-title" id="resultTitle">Analysis Results</div>
+                    <div class="result-content" id="resultContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('analysisForm');
+        const fileInput = document.getElementById('code_zip');
+        const fileLabel = document.getElementById('fileLabel');
+        const fileInfo = document.getElementById('fileInfo');
+        const submitBtn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const resultContainer = document.getElementById('resultContainer');
+        const resultBox = document.getElementById('resultBox');
+        const resultTitle = document.getElementById('resultTitle');
+        const resultContent = document.getElementById('resultContent');
+
+        // File upload handling
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                fileLabel.classList.add('has-file');
+                fileLabel.innerHTML = `
+                    <span class="file-upload-icon">✅</span>
+                    <span class="file-upload-text">File selected: ${file.name}</span>
+                `;
+                fileInfo.style.display = 'block';
+                fileInfo.innerHTML = `
+                    <strong>File:</strong> ${file.name}<br>
+                    <strong>Size:</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB
+                `;
+            }
+        });
+
+        // Drag and drop handling
+        fileLabel.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '#667eea';
+            this.style.background = '#f0f3ff';
+        });
+
+        fileLabel.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '#ccc';
+            this.style.background = '#fafafa';
+        });
+
+        fileLabel.addEventListener('drop', function(e) {
+            e.preventDefault();
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.zip')) {
+                fileInput.files = files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+            this.style.borderColor = '#ccc';
+            this.style.background = '#fafafa';
+        });
+
+        // Form submission
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const formData = new FormData(form);
+            const problemDescription = formData.get('problem_description');
+            const codeZip = formData.get('code_zip');
+
+            if (!problemDescription || !codeZip) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            // Show loading state
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            resultContainer.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Analysis failed');
+                }
+
+                // Show success result
+                resultBox.classList.remove('error');
+                resultTitle.textContent = 'Analysis Results';
+                resultContent.innerHTML = formatAnalysisResult(result);
+                resultContainer.style.display = 'block';
+
+            } catch (error) {
+                // Show error result
+                resultBox.classList.add('error');
+                resultTitle.textContent = 'Analysis Error';
+                resultContent.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
+                resultContainer.style.display = 'block';
+            } finally {
+                // Hide loading state
+                loading.style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        });
+
+        function formatAnalysisResult(result) {
+            let html = '';
+
+            // Project Structure Section
+            if (result.project_structure) {
+                html += `
+                    <div style="margin-bottom: 25px;">
+                        <h3 style="color: #667eea; margin-bottom: 10px;">📁 Project Structure</h3>
+                        <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px;">
+                            <pre style="margin: 0; font-family: 'Courier New', monospace; font-size: 0.85em; line-height: 1.4; overflow-x: auto; color: #333;">${result.project_structure}</pre>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Feature Analysis Section
+            if (result.feature_analysis && result.feature_analysis.length > 0) {
+                html += `<div style="margin-bottom: 20px;">
+                    <h3 style="color: #667eea; margin-bottom: 10px;">🎯 Feature Analysis</h3>
+                `;
+
+                result.feature_analysis.forEach((feature, index) => {
+                    html += `
+                        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white;">
+                            <h4 style="color: #333; margin-bottom: 10px;">Feature ${index + 1}</h4>
+                            <p style="margin-bottom: 15px; font-size: 0.95em; color: #555;"><strong>Description:</strong> ${feature.feature_description}</p>
+
+                            <div style="margin-bottom: 10px;">
+                                <strong>Implementation Locations:</strong>
+                                <ul style="margin-left: 20px; margin-top: 8px; list-style: none; padding-left: 0;">
+                    `;
+
+                    feature.implementation_location.forEach(location => {
+                        html += `
+                            <li style="margin-bottom: 12px; padding: 10px; background: #f8f9fa; border-radius: 5px; border-left: 3px solid #667eea;">
+                                <div style="font-weight: 600; color: #333; margin-bottom: 5px;">📄 ${location.file}</div>
+                                ${location.function ? `<div style="margin-left: 10px; margin-bottom: 3px;">📍 Function: <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;">${location.function}</code></div>` : ''}
+                                ${location.lines ? `<div style="margin-left: 10px; color: #666;">📏 Lines: <span style="font-family: monospace; background: #e9ecef; padding: 2px 6px; border-radius: 3px;">${location.lines}</span></div>` : ''}
+                            </li>
+                        `;
+                    });
+
+                    html += `
+                                </ul>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+            } else {
+                html += `
+                    <div style="padding: 20px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; margin-bottom: 20px;">
+                        <p style="margin: 0; color: #856404;">⚠️ No features were identified in the analysis.</p>
+                    </div>
+                `;
+            }
+
+            // Execution Plan Section
+            if (result.execution_plan_suggestion) {
+                html += `
+                    <div style="margin-bottom: 20px;">
+                        <h3 style="color: #667eea; margin-bottom: 10px;">🚀 Execution Plan</h3>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
+                            <p style="margin-bottom: 10px;"><strong>Suggested Commands:</strong></p>
+                            <pre style="background: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 5px; margin: 0; overflow-x: auto; font-size: 0.9em; line-height: 1.5;">${result.execution_plan_suggestion}</pre>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+    </script>
+</body>
+</html>
