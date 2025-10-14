@@ -34,7 +34,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     """
     try:
         result = subprocess.run(
-            ['gemini', '-p', prompt, '--output-format', 'json'],
+            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
             capture_output=True,
             text=True,
             timeout=120,  # 2 minute timeout

@@ -98,8 +98,8 @@ def build_file_context(
     Build context string from multiple files.
     
     Args:
-        file_paths: List of file paths to include
-        base_directory: Base directory for relative paths
+        file_paths: List of file paths to include (can be relative or absolute)
+        base_directory: Base directory for resolving relative paths
         max_lines_per_file: Maximum lines to include per file
         
     Returns:
@@ -108,8 +108,21 @@ def build_file_context(
     context_parts = []
     
     for file_path in file_paths:
-        rel_path = os.path.relpath(file_path, base_directory)
-        content = read_file_content(file_path, max_lines=max_lines_per_file)
+        # Convert to absolute path if it's relative
+        if not os.path.isabs(file_path):
+            abs_path = os.path.join(base_directory, file_path)
+        else:
+            abs_path = file_path
+        
+        # Get relative path for display in context
+        try:
+            rel_path = os.path.relpath(abs_path, base_directory)
+        except ValueError:
+            # If relpath fails (e.g., different drives on Windows), use basename
+            rel_path = os.path.basename(abs_path)
+        
+        # Read content using absolute path
+        content = read_file_content(abs_path, max_lines=max_lines_per_file)
         
         context_parts.append(f"=== File: {rel_path} ===")
         context_parts.append(content)
@@ -136,7 +149,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     """
     try:
         result = subprocess.run(
-            ['gemini', '-p', prompt, '--output-format', 'json'],
+            ['gemini','-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
             capture_output=True,
             text=True,
             timeout=120,  # 2 minute timeout
@@ -165,7 +178,6 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
             end = response_text.rfind('```')
             if start > 2 and end > start:
                 response_text = response_text[start:end].strip()
-        
         return response_text
         
     except subprocess.TimeoutExpired:

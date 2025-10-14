@@ -1,8 +1,9 @@
 """
-Generate unit test execution commands based on code analysis.
+Recommend testing frameworks and generate test execution commands.
 
-This module analyzes codebases and generates appropriate commands to run
-unit tests, using Gemini CLI following the same pattern as agent.py.
+This module analyzes codebases, recommends the best testing framework to use
+based on the project's language and structure, and generates appropriate 
+commands to run unit tests. Uses Gemini CLI following the same pattern as agent.py.
 """
 import os
 import json
@@ -34,7 +35,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     """
     try:
         result = subprocess.run(
-            ['gemini', '-p', prompt, '--output-format', 'json'],
+            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
             capture_output=True,
             text=True,
             timeout=120,  # 2 minute timeout
@@ -47,8 +48,6 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
         # Parse the gemini-cli JSON wrapper
         gemini_output = json.loads(result.stdout.strip())
         response_text = gemini_output.get('response', '')
-        
-        print(f"Gemini CLI response: {response_text[:200]}...")
         
         # Remove markdown code blocks if present
         if '```json' in response_text:
@@ -64,7 +63,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
             if start > 2 and end > start:
                 response_text = response_text[start:end].strip()
         
-        print(f"Gemini CLI final response: {response_text[:200]}...")
+        print(f"Gemini CLI final response for test commands: {response_text[:200]}...")
         return response_text
         
     except subprocess.TimeoutExpired:
@@ -233,7 +232,10 @@ def generate_test_commands(
     test_pattern: Optional[str] = None
 ) -> Dict[str, any]:
     """
-    Generate commands to run unit tests based on code analysis.
+    Recommend testing framework and generate commands to run unit tests.
+    
+    Analyzes the project structure and recommends the best testing framework
+    to use based on the language, dependencies, and best practices.
     
     Args:
         directory: Root directory of the project
@@ -241,7 +243,7 @@ def generate_test_commands(
         test_pattern: Pattern to match test files (optional)
         
     Returns:
-        Dictionary with test commands and metadata
+        Dictionary with recommended framework, reasoning, test commands, and metadata
         
     Raises:
         TestCommandGenerationError: If generation fails
@@ -270,21 +272,27 @@ def generate_test_commands(
     context = build_test_context(test_files, config_files, directory)
     
     # Build prompt
-    prompt = f"""You are a test automation expert. Analyze the following project and generate commands to run unit tests.
+    prompt = f"""You are a test automation expert. Analyze the following project and recommend which testing framework should be used.
 
 PROJECT CONTEXT:
 {context}
 
 TASK:
-Generate appropriate commands to run unit tests for this project. Consider:
-1. The testing framework being used (pytest, jest, vitest, junit, etc.)
-2. Test configuration files present
-3. Package managers (npm, pip, maven, etc.)
-4. Common testing patterns
+Based on the project's language, existing dependencies, and structure, recommend the BEST testing framework to use for this project. Consider:
+1. Programming language (Python, JavaScript/TypeScript, Java, Go, etc.)
+2. Existing project dependencies and package managers
+3. Project type (web app, API, library, etc.)
+4. Industry best practices and modern standards
+5. Existing test files (if any) to understand current patterns
+
+If no testing framework is currently set up, recommend the most appropriate one for this tech stack.
+If a framework already exists, validate if it's the best choice or recommend a better alternative.
 
 Return a JSON object with this EXACT structure:
 {{
-  "test_framework": "name of the testing framework detected",
+  "recommended_framework": "name of the recommended testing framework (e.g., pytest, jest, vitest, junit, go test)",
+  "reason": "why this framework is recommended for this project",
+  "alternative_frameworks": ["alternative option 1", "alternative option 2"],
   "commands": [
     {{
       "command": "full command to run tests",
@@ -294,7 +302,7 @@ Return a JSON object with this EXACT structure:
   ],
   "setup_commands": [
     {{
-      "command": "setup command if needed",
+      "command": "setup command to install the framework",
       "description": "what this setup does"
     }}
   ],
@@ -305,16 +313,18 @@ Return a JSON object with this EXACT structure:
       "description": "what this variable controls"
     }}
   ],
-  "notes": "Additional notes or recommendations"
+  "notes": "Additional setup notes or best practices"
 }}
 
 IMPORTANT:
+- Recommend the BEST framework for this specific project
+- Provide clear reasoning for the recommendation
+- Include complete setup commands to install and configure the framework
 - Include commands for running all tests
-- Include commands for running specific test files if applicable
-- Include commands for running tests with coverage if supported
-- Include setup commands (install dependencies, etc.)
-- Be specific about the actual commands that would work
-- Use the detected framework and configuration
+- Include commands for running specific test files
+- Include commands for running tests with coverage
+- Be specific about actual commands that would work
+- Consider modern best practices (e.g., vitest over jest for Vite projects, pytest over unittest for Python)
 
 Return ONLY valid JSON, no additional text.
 """
@@ -340,7 +350,9 @@ Return ONLY valid JSON, no additional text.
                 
                 return {
                     "success": True,
-                    "test_framework": commands_data.get("test_framework", "unknown"),
+                    "recommended_framework": commands_data.get("recommended_framework", "unknown"),
+                    "reason": commands_data.get("reason", ""),
+                    "alternative_frameworks": commands_data.get("alternative_frameworks", []),
                     "commands": commands_data.get("commands", []),
                     "setup_commands": commands_data.get("setup_commands", []),
                     "environment_variables": commands_data.get("environment_variables", []),
@@ -371,14 +383,14 @@ def generate_test_commands_for_file(
     project_directory: Optional[str] = None
 ) -> Dict[str, any]:
     """
-    Generate commands to run a specific test file.
+    Recommend testing framework and generate commands to run a specific test file.
     
     Args:
         test_file: Path to the test file
         project_directory: Project root directory (optional, defaults to file's directory)
         
     Returns:
-        Dictionary with test commands
+        Dictionary with recommended framework and test commands
     """
     if not os.path.exists(test_file):
         return {
@@ -424,7 +436,7 @@ def generate_and_save_commands(
     specific_test_file: Optional[str] = None
 ) -> Dict[str, any]:
     """
-    Generate test commands and save to a file.
+    Recommend testing framework, generate test commands, and save to a file.
     
     Args:
         directory: Project root directory
@@ -432,7 +444,7 @@ def generate_and_save_commands(
         specific_test_file: Specific test file (optional)
         
     Returns:
-        Dictionary with results and metadata
+        Dictionary with recommended framework, commands, and metadata
     """
     result = generate_test_commands(
         directory=directory,

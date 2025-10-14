@@ -76,16 +76,32 @@ def initialize_state(
 
 
 def generate_test_commands_node(state: WorkflowState) -> WorkflowState:
-    """Node 1: Generate test commands for the project."""
+    """Node 1: Generate test commands and recommend testing framework."""
     state["current_step"] = "generate_test_commands"
-    state["logs"].append("Step 1: Generating test commands...")
+    state["logs"].append("Step 1: Analyzing project and recommending testing framework...")
     
     try:
         result = generate_test_commands(directory=state["base_directory"])
         
         if result['success']:
             state["test_commands"] = result
-            state["logs"].append(f"✅ Test framework detected: {result['test_framework']}")
+            
+            # Log recommended framework and reason
+            framework = result.get('recommended_framework', 'Unknown')
+            reason = result.get('reason', '')
+            alternatives = result.get('alternative_frameworks', [])
+            
+            state["logs"].append(f"✅ Recommended framework: {framework}")
+            if reason:
+                state["logs"].append(f"   Reason: {reason[:150]}...")
+            if alternatives:
+                state["logs"].append(f"   Alternatives: {', '.join(alternatives[:3])}")
+            
+            # Log setup commands count
+            setup_count = len(result.get('setup_commands', []))
+            if setup_count > 0:
+                state["logs"].append(f"   Setup commands: {setup_count} command(s) to configure testing")
+                
         else:
             error = f"Failed to generate test commands: {result.get('error', 'Unknown error')}"
             state["errors"].append(error)
@@ -295,26 +311,26 @@ def build_workflow() -> StateGraph:
     # Add nodes
     workflow.add_node("generate_test_commands", generate_test_commands_node)
     workflow.add_node("generate_diff", generate_diff_node)
-    workflow.add_node("apply_code_change", apply_code_change_node)
-    workflow.add_node("generate_unittest", generate_unittest_node)
-    workflow.add_node("run_tests", run_tests_node)
+    # workflow.add_node("apply_code_change", apply_code_change_node)
+    # workflow.add_node("generate_unittest", generate_unittest_node)
+    # workflow.add_node("run_tests", run_tests_node)
     
     # Define the flow
     workflow.set_entry_point("generate_test_commands")
     workflow.add_edge("generate_test_commands", "generate_diff")
-    workflow.add_edge("generate_diff", "apply_code_change")
-    workflow.add_edge("apply_code_change", "generate_unittest")
-    workflow.add_edge("generate_unittest", "run_tests")
+    # workflow.add_edge("generate_diff", "apply_code_change")
+    # workflow.add_edge("apply_code_change", "generate_unittest")
+    # workflow.add_edge("generate_unittest", "run_tests")
     
     # Add conditional edge for retry logic
-    workflow.add_conditional_edges(
-        "run_tests",
-        should_retry,
-        {
-            "retry": "generate_diff",  # Retry from diff generation
-            "end": END
-        }
-    )
+    # workflow.add_conditional_edges(
+    #     "run_tests",
+    #     should_retry,
+    #     {
+    #         "retry": "generate_diff",  # Retry from diff generation
+    #         "end": END
+    #     }
+    # )
     
     return workflow.compile()
 
@@ -396,9 +412,9 @@ def run_analysis_workflow(
     print(f"\n🚀 Starting workflow for {len(features)} features...\n")
     
     for i, feature in enumerate(features, 1):
-        feature_name = feature.get("feature", "Unknown feature")
-        files_to_modify = feature.get("files_to_modify", [])
-        implementation_notes = feature.get("implementation_notes", "")
+        feature_name = feature.get("feature_description", "Unknown feature")
+        files_to_modify = [x.get("file") for x in feature.get("implementation_location", [])]
+        implementation_notes = ", ".join([f"should modify function: {x.get('function')} in file: {x.get('file')} at lines: {x.get('lines')}" for x in feature.get("implementation_location", [])])
         
         print(f"{'='*80}")
         print(f"Feature {i}/{len(features)}: {feature_name}")
