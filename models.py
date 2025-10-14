@@ -1,7 +1,7 @@
 """
 Pydantic models for request/response validation.
 """
-from typing import List
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -30,4 +30,17 @@ class AnalysisReport(BaseModel):
     )
     execution_plan_suggestion: str = Field(
         ..., description="Suggestions for running the project"
+    )
+
+
+class RunAndTestRequest(BaseModel):
+    """Request model for run-and-test endpoint."""
+    analysis_report: Dict[str, Any] = Field(
+        ..., description="Analysis report from /api/analyze endpoint"
+    )
+    base_directory: str = Field(
+        ..., description="Base directory of the codebase"
+    )
+    max_retries: int = Field(
+        default=3, description="Maximum retry attempts per feature"
     )

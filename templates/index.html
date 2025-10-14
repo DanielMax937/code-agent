@@ -234,6 +234,137 @@
             margin-bottom: 5px;
         }
 
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .run-workflow-btn {
+            background: linear-gradient(45deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .run-workflow-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(40, 167, 69, 0.3);
+        }
+
+        .run-workflow-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .download-btn {
+            background: linear-gradient(45deg, #17a2b8, #138496);
+            color: white;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(23, 162, 184, 0.3);
+        }
+
+        .workflow-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f0f8ff;
+            border-radius: 10px;
+            border: 2px solid #667eea;
+        }
+
+        .workflow-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+
+        .feature-item {
+            background: white;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .feature-success {
+            border-left-color: #28a745;
+        }
+
+        .feature-failed {
+            border-left-color: #dc3545;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .summary-stats {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .stat-box {
+            flex: 1;
+            min-width: 120px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
         @media (max-width: 768px) {
             .container {
                 margin: 10px;
@@ -314,6 +445,10 @@
         const resultBox = document.getElementById('resultBox');
         const resultTitle = document.getElementById('resultTitle');
         const resultContent = document.getElementById('resultContent');
+        
+        // Store analysis result globally
+        let currentAnalysis = null;
+        let uploadedZipPath = null;
 
         // File upload handling
         fileInput.addEventListener('change', function(e) {
@@ -386,11 +521,27 @@
                     throw new Error(result.detail || 'Analysis failed');
                 }
 
+                // Store analysis result
+                currentAnalysis = result;
+                
                 // Show success result
                 resultBox.classList.remove('error');
                 resultTitle.textContent = 'Analysis Results';
-                resultContent.innerHTML = formatAnalysisResult(result);
+                resultContent.innerHTML = formatAnalysisResult(result) + getActionButtons();
                 resultContainer.style.display = 'block';
+                
+                // Add event listener to run workflow button
+                setTimeout(() => {
+                    const runBtn = document.getElementById('runWorkflowBtn');
+                    if (runBtn) {
+                        runBtn.addEventListener('click', runWorkflow);
+                    }
+                    
+                    const downloadBtn = document.getElementById('downloadAnalysisBtn');
+                    if (downloadBtn) {
+                        downloadBtn.addEventListener('click', downloadAnalysis);
+                    }
+                }, 100);
 
             } catch (error) {
                 // Show error result
@@ -477,6 +628,212 @@
             }
 
             return html;
+        }
+
+        function getActionButtons() {
+            if (!currentAnalysis || !currentAnalysis.feature_analysis || currentAnalysis.feature_analysis.length === 0) {
+                return '';
+            }
+            
+            return `
+                <div class="action-buttons">
+                    <button id="runWorkflowBtn" class="action-btn run-workflow-btn">
+                        🚀 Run Workflow & Implement
+                    </button>
+                    <button id="downloadAnalysisBtn" class="action-btn download-btn">
+                        📥 Download Analysis
+                    </button>
+                </div>
+            `;
+        }
+
+        async function runWorkflow() {
+            if (!currentAnalysis) {
+                alert('No analysis available');
+                return;
+            }
+
+            const runBtn = document.getElementById('runWorkflowBtn');
+            const baseDirectory = prompt('Enter base directory for the codebase:', './temp');
+            
+            if (!baseDirectory) {
+                return;
+            }
+
+            // Disable button and show loading
+            runBtn.disabled = true;
+            runBtn.textContent = '⏳ Running workflow...';
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/run-and-test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        analysis_report: currentAnalysis,
+                        base_directory: baseDirectory,
+                        max_retries: 3
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Workflow execution failed');
+                }
+
+                // Show workflow results
+                const workflowHtml = formatWorkflowResult(result);
+                resultContent.innerHTML += workflowHtml;
+                
+                // Scroll to workflow results
+                const workflowSection = document.querySelector('.workflow-section');
+                if (workflowSection) {
+                    workflowSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+
+            } catch (error) {
+                alert(`Workflow Error: ${error.message}`);
+                // Re-enable button
+                runBtn.disabled = false;
+                runBtn.textContent = '🚀 Run Workflow & Implement';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function formatWorkflowResult(result) {
+            const summary = result.summary;
+            
+            let html = `
+                <div class="workflow-section">
+                    <div class="workflow-title">🔄 Workflow Execution Results</div>
+                    
+                    <div class="summary-stats">
+                        <div class="stat-box">
+                            <div class="stat-number">${summary.total_features}</div>
+                            <div class="stat-label">Total Features</div>
+                        </div>
+                        <div class="stat-box" style="border-top: 3px solid #28a745;">
+                            <div class="stat-number" style="color: #28a745;">${summary.successful}</div>
+                            <div class="stat-label">✅ Successful</div>
+                        </div>
+                        <div class="stat-box" style="border-top: 3px solid #dc3545;">
+                            <div class="stat-number" style="color: #dc3545;">${summary.failed}</div>
+                            <div class="stat-label">❌ Failed</div>
+                        </div>
+                        <div class="stat-box" style="border-top: 3px solid #ffc107;">
+                            <div class="stat-number" style="color: #ffc107;">${summary.total_retries}</div>
+                            <div class="stat-label">🔄 Total Retries</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <h4 style="margin-bottom: 15px; color: #333;">📋 Feature Implementation Details</h4>
+            `;
+            
+            result.workflow_results.forEach((feature, index) => {
+                const statusClass = feature.success ? 'feature-success' : 'feature-failed';
+                const statusBadge = feature.success ? 
+                    `<span class="badge badge-success">✅ Success</span>` : 
+                    `<span class="badge badge-danger">❌ Failed</span>`;
+                const retryBadge = feature.retry_count > 0 ? 
+                    `<span class="badge badge-warning">🔄 ${feature.retry_count} retries</span>` : '';
+                
+                html += `
+                    <div class="feature-item ${statusClass}">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                            <div>
+                                <strong style="font-size: 1.05rem;">${feature.feature_name || `Feature ${index + 1}`}</strong>
+                                ${statusBadge}
+                                ${retryBadge}
+                            </div>
+                        </div>
+                `;
+                
+                if (feature.success && feature.test_results) {
+                    const testSummary = feature.test_results.summary;
+                    html += `
+                        <div style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                            <div style="font-weight: 600; margin-bottom: 5px;">Test Results:</div>
+                            <div style="font-size: 0.9rem;">
+                                📊 Tests: ${testSummary.passed}/${testSummary.total} passed
+                                ${testSummary.coverage ? ` | Coverage: ${testSummary.coverage}%` : ''}
+                                ${testSummary.duration ? ` | Duration: ${testSummary.duration.toFixed(2)}s` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (feature.message) {
+                    html += `
+                        <div style="margin-top: 10px;">
+                            <div style="font-size: 0.9rem; color: #666;">
+                                💬 ${feature.message}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (feature.logs && feature.logs.length > 0) {
+                    html += `
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; font-weight: 600; color: #667eea;">
+                                📝 View Logs (${feature.logs.length})
+                            </summary>
+                            <div style="margin-top: 10px; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 5px;">
+                    `;
+                    feature.logs.forEach(log => {
+                        html += `<div style="font-size: 0.85rem; margin-bottom: 5px; font-family: monospace;">${log}</div>`;
+                    });
+                    html += `
+                            </div>
+                        </details>
+                    `;
+                }
+                
+                if (feature.errors && feature.errors.length > 0) {
+                    html += `
+                        <div style="margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 5px; border-left: 3px solid #dc3545;">
+                            <div style="font-weight: 600; color: #721c24; margin-bottom: 5px;">❌ Errors:</div>
+                    `;
+                    feature.errors.forEach(error => {
+                        html += `<div style="font-size: 0.85rem; color: #721c24; margin-bottom: 5px;">${error}</div>`;
+                    });
+                    html += `
+                        </div>
+                    `;
+                }
+                
+                html += `</div>`;
+            });
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            return html;
+        }
+
+        function downloadAnalysis() {
+            if (!currentAnalysis) {
+                alert('No analysis available');
+                return;
+            }
+
+            const dataStr = JSON.stringify(currentAnalysis, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'analysis_result.json';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
         }
     </script>
 </body>
