@@ -592,18 +592,6 @@
         function formatAnalysisResult(result) {
             let html = '';
 
-            // Project Structure Section
-            if (result.project_structure) {
-                html += `
-                    <div style="margin-bottom: 25px;">
-                        <h3 style="color: #667eea; margin-bottom: 10px;">📁 Project Structure</h3>
-                        <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px;">
-                            <pre style="margin: 0; font-family: 'Courier New', monospace; font-size: 0.85em; line-height: 1.4; overflow-x: auto; color: #333;">${result.project_structure}</pre>
-                        </div>
-                    </div>
-                `;
-            }
-
             // Feature Analysis Section
             if (result.feature_analysis && result.feature_analysis.length > 0) {
                 html += `<div style="margin-bottom: 20px;">
@@ -660,6 +648,19 @@
                 `;
             }
 
+
+
+            // Project Structure Section
+            if (result.project_structure) {
+                html += `
+                    <div style="margin-bottom: 25px;">
+                        <h3 style="color: #667eea; margin-bottom: 10px;">📁 Project Structure</h3>
+                        <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px;">
+                            <pre style="margin: 0; font-family: 'Courier New', monospace; font-size: 0.85em; line-height: 1.4; overflow-x: auto; color: #333;">${result.project_structure}</pre>
+                        </div>
+                    </div>
+                `;
+            }
             return html;
         }
 
