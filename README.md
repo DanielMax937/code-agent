@@ -1,717 +1,750 @@
-# Code Analysis Agent
+# Code Agent - AI-Powered Code Analysis & Testing
 
-An AI-powered code analysis and automated implementation service built with FastAPI, Gemini CLI, and LangGraph. Analyzes codebases, generates code changes, and implements features with automated testing.
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## Overview
+An intelligent code analysis and testing agent powered by Google's Gemini AI. This tool analyzes codebases, implements features, generates unit tests, and validates changes automatically.
 
-This service provides two powerful capabilities:
+> **⚠️ IMPORTANT NOTICE**  
+> **Network access to Google Gemini API is required** for this application to function. Ensure your environment has:
+> - Active internet connection
+> - Access to Google AI services (api.google.com)
+> - Valid Gemini API key configured
+> - No firewall blocking Google API endpoints
 
-1. **Code Analysis**: Analyzes a codebase and identifies where features should be implemented
-2. **Automated Implementation** ⭐ **NEW**: Automatically implements features with a complete workflow:
-   - Generate code changes from natural language
-   - Apply changes safely
-   - Generate unit tests
-   - Run tests with intelligent retry logic (up to 3 attempts)
+## 🌟 Features
 
-## Features
+- **📊 Intelligent Code Analysis**: Analyzes project structure and identifies key files
+- **🔧 Automated Code Modification**: Implements features using AI with a two-step process
+- **🧪 Smart Test Generation**: Automatically generates unit tests based on code changes
+- **✅ Test Framework Recommendation**: Suggests the best testing framework for your project
+- **🔄 Automated Testing**: Runs tests with dependency installation and reports results
+- **🐳 Docker Support**: Fully containerized with pre-configured environment
+- **🌐 Web Interface**: User-friendly UI for code analysis and testing workflows
 
-### Core Analysis
-- RESTful API built with FastAPI
-- Intelligent code analysis using Gemini CLI
-- Structured JSON output with feature locations
-- Automatic project structure analysis
-- Execution plan generation
-- No API key management needed (uses local gemini-cli)
+## 📋 Table of Contents
 
-### Automated Implementation Workflow ⭐ NEW
-- **LangGraph-orchestrated** 5-agent workflow
-- **Intelligent retry logic** - auto-fixes failed tests
-- **End-to-end automation** - from description to tested code
-- **Feature-by-feature processing** with detailed tracking
-- **Comprehensive logging** and error handling
+- [Architecture](#architecture)
+- [Logic Flow](#logic-flow)
+- [Prerequisites](#prerequisites)
+- [Local Setup](#local-setup)
+- [Docker Setup](#docker-setup)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [API Endpoints](#api-endpoints)
 
-## Installation
+---
 
-### Prerequisites
+## 🏗️ Architecture
 
-- Python 3.9 or higher
-- pip or poetry
-- **gemini-cli** installed and configured (required)
+### System Components
 
-### Setup
-
-1. Install gemini-cli if you haven't already:
-```bash
-# Follow instructions at: https://github.com/google/generative-ai-cli
-# Or use your preferred installation method
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Web Interface (HTML/JS)                  │
+│                     http://localhost:8000                    │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    FastAPI Backend (main.py)                 │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  /api/analyze        - Analyze codebase              │   │
+│  │  /api/run-and-test   - Run implementation workflow   │   │
+│  │  /api/cleanup        - Clean temporary files         │   │
+│  └──────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Core Analysis Agent                       │
+│                      (agent.py)                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  • Project structure analysis                        │   │
+│  │  • Key file identification                           │   │
+│  │  • Feature location mapping                          │   │
+│  │  • Execution plan generation                         │   │
+│  └──────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│               LangGraph Workflow (workflow.py)               │
+│                                                              │
+│    Step 1: Generate Test Commands                           │
+│         ↓                                                    │
+│    Step 2: Modify Code (Two-step AI process)                │
+│         ↓                                                    │
+│    Step 3: Generate Unit Tests                              │
+│         ↓                                                    │
+│    Step 4: Run Tests & Validate                             │
+│         ↓                                                    │
+│    ← Retry Loop (max 3 times if tests fail)                 │
+│                                                              │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    AI-Powered Tools                          │
+│                                                              │
+│  ┌─────────────────────┐  ┌─────────────────────────────┐   │
+│  │ generate_test_      │  │  code_modifier.py          │   │
+│  │ commands.py         │  │  • Identify files to change│   │
+│  │ • Recommend         │  │  • Generate new content    │   │
+│  │   framework         │  │  • Write to disk          │   │
+│  │ • Setup commands    │  │  • Create backups         │   │
+│  └─────────────────────┘  └─────────────────────────────┘   │
+│                                                              │
+│  ┌─────────────────────┐  ┌─────────────────────────────┐   │
+│  │ generate_unittest.  │  │  run_unittest.py           │   │
+│  │ py                  │  │  • Install dependencies    │   │
+│  │ • Generate test code│  │  • Run tests per file     │   │
+│  │ • Framework-aware   │  │  • Parse results          │   │
+│  │ • Save to disk      │  │  • Aggregate summary      │   │
+│  └─────────────────────┘  └─────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Gemini CLI Integration                      │
+│                                                              │
+│  • Model: Configurable via GEMINI_MODEL env var            │
+│  • Default: gemini-2.5-flash                                │
+│  • File redirection to avoid truncation                     │
+│  • Timeout protection (120s - 1200s)                        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-2. Clone the repository:
+### Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| **Backend** | FastAPI (Python 3.11+) |
+| **AI Integration** | Google Gemini CLI |
+| **Workflow** | LangGraph |
+| **Frontend** | HTML/JavaScript |
+| **Version Control** | Git (for change tracking) |
+| **Testing Frameworks** | pytest, jest, vitest, mocha (auto-detected) |
+| **Containerization** | Docker + Docker Compose |
+
+---
+
+## 🔄 Logic Flow
+
+### 1. Code Analysis Flow
+
+```mermaid
+graph TD
+    A[Upload ZIP/Code] --> B[Extract to temp directory]
+    B --> C[Get project structure]
+    C --> D[Identify key files using AI]
+    D --> E[Analyze features & generate execution plan]
+    E --> F[Return analysis report]
+```
+
+**Steps:**
+1. **Upload**: User uploads code ZIP or provides directory
+2. **Extract**: Code extracted to temporary directory
+3. **Structure Analysis**: Build project tree structure
+4. **Key File Identification**: AI identifies relevant files (API routes, services, models)
+5. **Feature Analysis**: AI locates where features should be implemented
+6. **Execution Plan**: AI generates step-by-step implementation guide
+
+### 2. Implementation & Testing Workflow
+
+```mermaid
+graph TD
+    A[Analysis Report] --> B[For each feature]
+    B --> C[Step 1: Generate Test Commands]
+    C --> D[Step 2: Modify Code]
+    D --> D1[AI identifies files to change]
+    D1 --> D2[AI generates new content per file]
+    D2 --> D3[Write changes & git commit]
+    D3 --> E[Step 3: Generate Unit Tests]
+    E --> F[Step 4: Run Tests]
+    F --> G{Tests Pass?}
+    G -->|Yes| H[Next Feature]
+    G -->|No| I{Retry < 3?}
+    I -->|Yes| D
+    I -->|No| J[Mark as Failed]
+    H --> K{More Features?}
+    K -->|Yes| B
+    K -->|No| L[Complete]
+```
+
+**Detailed Steps:**
+
+#### Step 1: Generate Test Commands
+- **Input**: Feature description, codebase
+- **Process**: 
+  - AI analyzes project to recommend testing framework
+  - Generates dependency installation commands
+  - Creates test execution commands
+- **Output**: Framework recommendation, setup & run commands
+
+#### Step 2: Modify Code (Two-Step AI Process)
+1. **Identify Phase**:
+   - AI receives: Requirements + All file contexts
+   - AI returns: List of files that need changes
+   
+2. **Generate Phase** (for each file):
+   - AI receives: Requirements + Single file content
+   - AI returns: Complete updated file content
+   
+3. **Apply Phase**:
+   - Write changes to disk with backups
+   - Git commit to track changes
+   - Generate git diff
+
+#### Step 3: Generate Unit Tests
+- **Input**: Feature description, git diff of changes, framework info
+- **Process**:
+  - AI analyzes changes from git diff
+  - Generates comprehensive tests for modified functionality
+  - Follows framework-specific best practices
+  - Saves test files to disk
+- **Output**: Test code files
+
+#### Step 4: Run Tests
+- **Input**: Test files, setup commands
+- **Process**:
+  - Install dependencies (npm install, pip install, etc.)
+  - Install testing frameworks
+  - Run each test file individually
+  - Capture and parse output
+- **Output**: Test results, pass/fail status
+
+#### Retry Mechanism
+- **Trigger**: Test failures
+- **Max Retries**: 3 attempts per feature
+- **On Retry**:
+  - Error context passed back to AI
+  - Code modification attempted with fixes
+  - New tests generated if needed
+  - Tests run again
+
+### 3. Git Integration Flow
+
+```
+Initial State
+    ↓
+git init
+    ↓
+git add . && git commit -m "Initial state"
+    ↓
+AI modifies code
+    ↓
+git diff > changes.diff
+    ↓
+Pass diff to test generation
+    ↓
+Tests validate changes
+```
+
+**Benefits:**
+- Precise change tracking via git diff
+- Easy rollback if needed
+- Clear audit trail
+- Test generation based on actual changes
+
+---
+
+## 📦 Prerequisites
+
+### For Local Development
+
+- **Python**: 3.11 or higher
+- **Node.js**: 20.x or higher (for JS/TS testing support)
+- **Gemini CLI**: Google's Gemini command-line tool
+- **Git**: For version control in workflows
+- **Gemini API Key**: From [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+### For Docker Deployment
+
+- **Docker**: 20.10 or higher
+- **Docker Compose**: 1.29 or higher
+- **Gemini API Key**: From [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+---
+
+## 🚀 Local Setup
+
+### 1. Clone the Repository
+
 ```bash
-git clone <repository-url>
+git clone <your-repo-url>
 cd code-agent
 ```
 
-3. Install dependencies:
+### 2. Install Python Dependencies
 
-Using pip:
 ```bash
+# Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-Or using poetry:
-```bash
-poetry install
-```
-
-4. (Optional) Configure environment variables:
-```bash
-cp .env.example .env
-```
-
-You can configure server settings in `.env`:
-```env
-HOST=0.0.0.0
-PORT=8000
-MAX_UPLOAD_SIZE=52428800
-TEMP_DIR=./temp
-```
-
-## Usage
-
-### Starting the Server
-
-Run the FastAPI server:
+### 3. Install Gemini CLI
 
 ```bash
-python main.py
-```
+# Install globally via npm
+npm install -g @google/gemini-cli
 
-Or using uvicorn directly:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-The API will be available at `http://localhost:8000`
-
-### API Documentation
-
-Once the server is running, visit:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-### API Endpoints
-
-The service provides three main endpoints:
-
-#### 1. `/api/analyze` - Code Analysis Only
-Analyzes a codebase and returns feature locations without implementation.
-
-#### 2. `/api/analyze-and-implement` - One-Step Automation
-Analyzes codebase AND automatically implements all features with the workflow.
-
-#### 3. `/api/run-and-test` ⭐ **NEW** - Two-Step Workflow
-Runs the workflow on an existing analysis result. Perfect for:
-- Reviewing analysis before implementation
-- Implementing features selectively
-- Reusing analysis across multiple runs
-
-### Making Requests
-
-#### 1. Analyze Only
-
-```bash
-curl -X POST "http://localhost:8000/api/analyze" \
-  -F "problem_description=Implement user authentication with login and registration features" \
-  -F "code_zip=@/path/to/your/code.zip"
-```
-
-#### Using Python
-
-```python
-import requests
-
-url = "http://localhost:8000/api/analyze"
-
-with open("code.zip", "rb") as f:
-    files = {"code_zip": f}
-    data = {"problem_description": "Implement user authentication with login and registration"}
-    response = requests.post(url, files=files, data=data)
-
-print(response.json())
-```
-
-#### Using JavaScript/fetch
-
-```javascript
-const formData = new FormData();
-formData.append('problem_description', 'Implement user authentication');
-formData.append('code_zip', fileInput.files[0]);
-
-const response = await fetch('http://localhost:8000/api/analyze', {
-  method: 'POST',
-  body: formData
-});
-
-const result = await response.json();
-console.log(result);
-```
-
-#### 2. Two-Step Workflow (Analyze + Run Workflow)
-
-**Step 1: Analyze**
-```bash
-curl -X POST "http://localhost:8000/api/analyze" \
-  -F "problem_description=Implement user authentication" \
-  -F "code_zip=@./project.zip" \
-  > analysis.json
-```
-
-**Step 2: Run workflow with analysis**
-```bash
-curl -X POST "http://localhost:8000/api/run-and-test" \
-  -H "Content-Type: application/json" \
-  -d @- <<EOF
-{
-  "analysis_report": $(cat analysis.json),
-  "base_directory": "./my-project",
-  "max_retries": 3
-}
-EOF
-```
-
-**Python Example:**
-```python
-import requests
-
-# Step 1: Analyze
-with open('project.zip', 'rb') as f:
-    analyze_response = requests.post(
-        'http://localhost:8000/api/analyze',
-        data={'problem_description': 'Implement authentication'},
-        files={'code_zip': f}
-    )
-
-analysis = analyze_response.json()
-
-# Review analysis before implementing
-print(f"Features found: {len(analysis['feature_analysis'])}")
-
-# Step 2: Run workflow for each feature
-workflow_response = requests.post(
-    'http://localhost:8000/api/run-and-test',
-    json={
-        'analysis_report': analysis,
-        'base_directory': './my-project',
-        'max_retries': 3
-    }
-)
-
-result = workflow_response.json()
-print(f"Success: {result['summary']['successful']}/{result['summary']['total_features']}")
-```
-
-#### 3. One-Step Workflow (All-in-One)
-
-```bash
-curl -X POST "http://localhost:8000/api/analyze-and-implement" \
-  -F "problem_description=Implement user authentication" \
-  -F "code_zip=@./project.zip" \
-  -F "max_retries=3"
-```
-
-**Python Example:**
-```python
-import requests
-
-with open('project.zip', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8000/api/analyze-and-implement',
-        data={
-            'problem_description': 'Implement authentication',
-            'max_retries': 3
-        },
-        files={'code_zip': f}
-    )
-
-result = response.json()
-print(f"Analysis: {len(result['analysis']['feature_analysis'])} features")
-print(f"Implementation: {result['summary']['successful']} successful")
-```
-
-### Workflow Comparison
-
-| Feature | `/api/analyze` | `/api/run-and-test` | `/api/analyze-and-implement` |
-|---------|----------------|---------------------|------------------------------|
-| Analyzes code | ✅ | ❌ (requires analysis) | ✅ |
-| Implements features | ❌ | ✅ | ✅ |
-| Review before implementing | ✅ | ✅ | ❌ |
-| Selective implementation | N/A | ✅ | ❌ |
-| Reuse analysis | ✅ | ✅ | ❌ |
-| Number of API calls | 1 | 2 (analyze + run) | 1 |
-| Best for | Code review | Controlled implementation | Full automation |
-
-### Response Format
-
-The API returns a JSON response with the following structure:
-
-```json
-{
-  "feature_analysis": [
-    {
-      "feature_description": "Implement the 'create channel' feature",
-      "implementation_location": [
-        {
-          "file": "src/modules/channel/channel.resolver.ts",
-          "function": "createChannel",
-          "lines": "13-16"
-        },
-        {
-          "file": "src/modules/channel/channel.service.ts",
-          "function": "create",
-          "lines": "21-24"
-        }
-      ]
-    }
-  ],
-  "execution_plan_suggestion": "To run this project, execute `npm install` and then `npm run start:dev`"
-}
-```
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HOST` | Server host | `0.0.0.0` |
-| `PORT` | Server port | `8000` |
-| `MAX_UPLOAD_SIZE` | Maximum upload size in bytes | `52428800` (50MB) |
-| `TEMP_DIR` | Temporary directory for file processing | `./temp` |
-
-**Note:** The application uses `gemini-cli` which should be configured separately. No API keys are needed in the application configuration.
-
-## Project Structure
-
-```
-code-agent/
-├── main.py              # FastAPI application
-├── agent.py             # Code analysis agent logic
-├── config.py            # Configuration management
-├── models.py            # Pydantic models
-├── utils.py             # Utility functions
-├── requirements.txt     # Python dependencies
-├── templates/           # HTML templates
-│   └── index.html       # Web UI
-├── tools/               # Code modification tools
-│   ├── apply_code_change.py  # Git diff parser and applier
-│   ├── demo.py          # Interactive demo
-│   ├── test_apply_code_change.py  # Tests
-│   └── README.md        # Tools documentation
-├── .env.example         # Example environment configuration
-└── README.md            # This file
-```
-
-## Tools
-
-### Code Modification & Testing Agents
-
-The `tools/` directory contains five powerful AI agents that automate the complete development workflow:
-
-#### 1. Generate Diff Agent
-Generates git diffs from natural language prompts using AI.
-
-**Quick Example:**
-```python
-from tools import generate_diff_for_files
-
-result = generate_diff_for_files(
-    prompt="Add input validation to the login function",
-    file_paths=["auth.py"]
-)
-```
-
-#### 2. Apply Code Change Agent
-Parses and applies git diff files to update code safely.
-
-**Quick Example:**
-```python
-from tools import apply_diff_from_file
-
-result = apply_diff_from_file("changes.diff", base_directory="./project")
-```
-
-#### 3. Generate Test Commands Agent
-Analyzes code and generates commands to run unit tests.
-
-**Quick Example:**
-```python
-from tools import generate_test_commands
-
-result = generate_test_commands(directory="./project")
-if result['success']:
-    print(f"Framework: {result['test_framework']}")
-    for cmd in result['commands']:
-        print(cmd['command'])
-```
-
-#### 4. Generate Unittest Agent
-Generates actual unit test code using AI based on source files.
-
-**Quick Example:**
-```python
-from tools import generate_unittest
-
-result = generate_unittest(
-    source_file="calculator.py",
-    test_description="Test all functions with edge cases"
-)
-if result['success']:
-    print(f"Test code:\n{result['test_code']}")
-    print(f"Run: {result['run_command']}")
-```
-
-#### 5. Run Unittest Agent ⭐ NEW
-Executes unit tests and returns structured results with detailed output.
-
-**Quick Example:**
-```python
-from tools import run_tests
-
-result = run_tests(directory="./project", with_coverage=True)
-if result['success']:
-    print(f"✅ {result['summary']['passed']}/{result['summary']['total']} tests passed")
-    print(f"Coverage: {result['summary']['coverage']}%")
-else:
-    print(f"❌ {result['summary']['failed']} tests failed")
-```
-
-#### Complete Workflow: Generate → Apply → Test → Execute → Verify
-
-```python
-from tools import (
-    generate_diff_for_files,
-    apply_git_diff,
-    generate_unittest,
-    generate_test_commands,
-    run_tests
-)
-
-# Step 1: Generate diff from natural language
-gen_result = generate_diff_for_files(
-    prompt="Add error handling to file operations",
-    file_paths=["service.py"]
-)
-
-# Step 2: Apply the changes
-if gen_result['success']:
-    apply_result = apply_git_diff(gen_result['diff'], base_directory=".")
-    print(f"✅ Modified {apply_result['successful_files']} files")
-    
-    # Step 3: Generate unit tests for the changes
-    test_gen = generate_unittest(
-        source_file="service.py",
-        test_description="Test error handling with edge cases"
-    )
-    if test_gen['success']:
-        print(f"✅ Tests generated: {test_gen['test_file_name']}")
-    
-    # Step 4: Get commands to run tests
-    test_cmd = generate_test_commands(directory=".")
-    if test_cmd['success']:
-        print(f"🧪 Run: {test_cmd['commands'][0]['command']}")
-    
-    # Step 5: Execute the tests and get results
-    test_result = run_tests(directory=".", with_coverage=True)
-    if test_result['success']:
-        print(f"✅ All {test_result['summary']['passed']} tests passed!")
-        print(f"📊 Coverage: {test_result['summary']['coverage']}%")
-    else:
-        print(f"❌ {test_result['summary']['failed']} tests failed")
-        for failure in test_result['results']['failures']:
-            print(f"  • {failure['test']}")
-```
-
-**Features:**
-- 🤖 AI-powered diff generation (natural language → git diff)
-- ✅ Parse and apply git diff files
-- 🧪 Auto-generate test commands (detects framework & creates commands)
-- 🧬 Generate complete unit test code (AI-powered test creation)
-- ▶️ Execute tests and capture structured results
-- 📝 Support for file creation, modification, and deletion
-- 🔍 Dry run mode to preview changes
-- 🛡️ Context verification for safe application
-- 📊 Detailed statistics and error reporting
-- 🎯 CI/CD ready (JSON output for pipelines)
-- 🔄 TDD support (generate tests before implementation)
-- 📈 Coverage tracking and detailed test reports
-
-**Demo and Tests:**
-```bash
-# Test the apply agent
-python tools/test_apply_code_change.py
-
-# Demo all agents
-python tools/demo.py                    # Apply code changes
-python tools/demo_generate_diff.py      # Generate diffs
-python tools/demo_test_commands.py      # Generate test commands
-python tools/demo_unittest.py           # Generate unit tests
-python tools/demo_run_tests.py          # Run tests and get results ⭐ NEW
-python tools/workflow_example.py        # Complete workflows
-```
-
-See [tools/README.md](tools/README.md) and [tools/AGENTS_OVERVIEW.md](tools/AGENTS_OVERVIEW.md) for complete documentation.
-
----
-
-## LangGraph Workflow - Automated Implementation
-
-### Overview
-
-The **LangGraph Workflow** orchestrates all 5 agents to provide complete end-to-end automation from feature analysis to tested implementation, with intelligent retry logic.
-
-### Workflow Sequence
-
-```
-1. Generate Test Commands  →  Auto-detect test framework
-2. Generate Diff          →  Create code changes from description
-3. Apply Code Change      →  Safely apply changes to files
-4. Generate Unit Tests    →  Create comprehensive tests
-5. Run Tests             →  Execute tests and verify
-   ↓
-   Tests Failed? → Retry (up to 3 times) → Regenerate with error context
-   ↓
-   Tests Passed? → Success!
-```
-
-### Quick Start
-
-#### Using the API Endpoint
-
-```bash
-curl -X POST "http://localhost:8000/api/analyze-and-implement" \
-  -F "problem_description=Implement user authentication with JWT tokens" \
-  -F "code_zip=@./my-project.zip" \
-  -F "max_retries=3"
-```
-
-#### Using Python
-
-```python
-import requests
-
-with open('my-project.zip', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8000/api/analyze-and-implement',
-        data={
-            'problem_description': 'Add user authentication',
-            'max_retries': 3
-        },
-        files={'code_zip': f}
-    )
-
-result = response.json()
-print(f"Features: {result['summary']['successful']}/{result['summary']['total_features']}")
-```
-
-#### Direct Workflow Usage
-
-```python
-from workflow import run_feature_workflow
-
-result = run_feature_workflow(
-    feature_description="Add email validation to registration",
-    feature_files=["auth.py", "validators.py"],
-    base_directory="./project",
-    max_retries=3
-)
-
-if result['success']:
-    print(f"✅ Feature implemented!")
-    print(f"Tests: {result['test_results']['summary']['passed']} passed")
-    if result['retry_count'] > 0:
-        print(f"Succeeded after {result['retry_count']} retries")
-```
-
-### Key Features
-
-#### 🔄 Intelligent Retry Logic
-- Automatically retries failed tests up to 3 times (configurable)
-- Extracts error context from failures
-- Regenerates code with fixes based on test errors
-- Tracks retry attempts and provides detailed logs
-
-#### 📊 Comprehensive Results
-
-```python
-{
-    "success": True,
-    "message": "Feature implemented successfully! 15/15 tests passed.",
-    "retry_count": 1,
-    "test_results": {
-        "summary": {
-            "total": 15,
-            "passed": 15,
-            "failed": 0,
-            "coverage": 95
-        }
-    },
-    "logs": [
-        "Step 1: Generating test commands...",
-        "✅ Test framework detected: pytest",
-        "Step 2: Generating code diff...",
-        "✅ Generated diff for 2 files",
-        "Step 3: Applying code changes...",
-        "✅ Modified 2 files successfully",
-        "Step 4: Generating unit tests...",
-        "✅ Generated 2 test files",
-        "Step 5: Running unit tests...",
-        "❌ 2 tests failed",
-        "🔄 Retry 1/3: Regenerating with error context...",
-        "✅ All 15 tests passed!",
-        "📊 Coverage: 95%"
-    ]
-}
-```
-
-#### 🎯 Multi-Feature Processing
-
-```python
-from workflow import run_analysis_workflow
-
-# Process all features from analysis report
-results = run_analysis_workflow(
-    analysis_report=analysis,  # From CodeAnalysisAgent
-    base_directory="./project",
-    max_retries=3
-)
-
-# Summary
-successful = sum(1 for r in results if r['success'])
-print(f"Implemented: {successful}/{len(results)} features")
-```
-
-### Response Format
-
-#### Success Response
-```json
-{
-  "analysis": {
-    "feature_analysis": [...],
-    "project_structure": {...}
-  },
-  "workflow_results": [
-    {
-      "feature_name": "User Authentication",
-      "success": true,
-      "retry_count": 1,
-      "test_results": {
-        "summary": {
-          "total": 15,
-          "passed": 15,
-          "coverage": 95
-        }
-      }
-    }
-  ],
-  "summary": {
-    "total_features": 2,
-    "successful": 2,
-    "failed": 0,
-    "total_retries": 1
-  }
-}
-```
-
-### Configuration
-
-- **max_retries**: Maximum retry attempts per feature (default: 3)
-- **base_directory**: Project directory path
-- **feature_files**: List of files to modify
-
-### Documentation
-
-- **[WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md)** - Complete workflow documentation
-- **[workflow.py](workflow.py)** - Implementation
-- **[workflow_example.py](workflow_example.py)** - Usage examples
-
----
-
-## Development
-
-### Running Tests
-
-```bash
-pytest
-
-# Or run specific tool tests
-python tools/test_apply_code_change.py
-```
-
-### Code Formatting
-
-```bash
-black .
-```
-
-### Linting
-
-```bash
-pylint *.py
-```
-
-## Supported Languages
-
-The agent can analyze codebases in multiple programming languages:
-- Python (.py)
-- JavaScript/TypeScript (.js, .ts, .jsx, .tsx)
-- Java (.java)
-- C/C++ (.c, .cpp, .h)
-- Go (.go)
-- Rust (.rs)
-- Ruby (.rb)
-- PHP (.php)
-- Swift (.swift)
-- Kotlin (.kt)
-- C# (.cs)
-- Scala (.scala)
-- SQL (.sql)
-- GraphQL (.graphql)
-- Vue (.vue)
-- Svelte (.svelte)
-
-## Limitations
-
-- Maximum upload size: 50MB (configurable)
-- The agent analyzes up to 30 key files to manage token usage
-- Large files are truncated to 500 lines for analysis
-
-## Troubleshooting
-
-### "gemini-cli not found"
-Make sure `gemini-cli` is installed and available in your system PATH. You can verify by running:
-```bash
+# Verify installation
 gemini --version
 ```
 
-### "Gemini CLI request timed out"
-The analysis is taking longer than expected (>2 minutes). This can happen with very large codebases. Try:
-- Reducing the size of your codebase
-- Removing unnecessary files before zipping
-- Checking your internet connection (gemini-cli needs network access)
+### 4. Install Node.js (for JS/TS testing support)
 
-### "File size exceeds maximum"
-The uploaded zip file is larger than the configured `MAX_UPLOAD_SIZE`. Either reduce the size of your codebase or increase the limit in `.env`.
+```bash
+# macOS (using Homebrew)
+brew install node@20
 
-### Poor analysis results
-- Ensure your problem description is clear and specific
-- Check that the uploaded codebase is complete
-- Make sure your gemini-cli is properly configured and authenticated
+# Ubuntu/Debian
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
 
-## License
+# Windows
+# Download from https://nodejs.org/
+```
 
-MIT
+### 5. Configure Environment Variables
 
-## Contributing
+```bash
+# Copy example env file
+cp env.example .env
 
-Contributions are welcome! Please open an issue or submit a pull request.
+# Edit .env and add your configuration
+nano .env
+```
+
+**.env file:**
+```bash
+# Required
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Optional (has defaults)
+GEMINI_MODEL=gemini-2.5-flash
+HOST=0.0.0.0
+PORT=8000
+LOG_LEVEL=INFO
+```
+
+### 6. Run the Application
+
+```bash
+# Start the server
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Or use Python directly
+python -c "import uvicorn; uvicorn.run('main:app', host='0.0.0.0', port=8000, reload=True)"
+```
+
+### 7. Access the Application
+
+Open your browser and navigate to:
+```
+http://localhost:8000
+```
+
+---
+
+## 🐳 Docker Setup
+
+> **📡 Network Requirement**: Ensure your Docker container has internet access to reach Google Gemini API endpoints.
+
+### Quick Start
+
+```bash
+# 1. Create .env file
+cp env.example .env
+
+# 2. Add your Gemini API key to .env
+echo "GEMINI_API_KEY=your_key_here" >> .env
+
+# 3. Build and run
+docker-compose up -d
+
+# 4. View logs
+docker-compose logs -f
+
+# 5. Access the application
+# http://localhost:8000
+```
+
+### Detailed Docker Commands
+
+#### Build the Image
+
+```bash
+docker build -t code-agent:latest .
+```
+
+#### Run with Docker Compose
+
+```bash
+# Start in background
+docker-compose up -d
+
+# Start with logs
+docker-compose up
+
+# Stop
+docker-compose down
+
+# Rebuild and start
+docker-compose up -d --build
+```
+
+#### Run with Docker CLI
+
+```bash
+docker run -d \
+  --name code-agent \
+  -p 8000:8000 \
+  -e GEMINI_API_KEY=your_api_key \
+  -e GEMINI_MODEL=gemini-2.5-flash \
+  -v $(pwd)/temp:/app/temp \
+  code-agent:latest
+```
+
+#### Useful Docker Commands
+
+```bash
+# View logs
+docker logs -f code-agent
+
+# Execute commands inside container
+docker exec -it code-agent bash
+
+# Test gemini-cli
+docker exec code-agent gemini --version
+
+# Check environment
+docker exec code-agent env | grep GEMINI
+```
+
+### Docker Environment Variables
+
+Configure in `docker-compose.yml` or `.env`:
+
+```yaml
+environment:
+  - GEMINI_API_KEY=${GEMINI_API_KEY}
+  - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+  - PYTHONUNBUFFERED=1
+```
+
+---
+
+## 💻 Usage
+
+### Web Interface
+
+1. **Navigate to** `http://localhost:8000`
+2. **Upload** your code ZIP file
+3. **Enter** feature description
+4. **Click "Analyze Code"** to analyze the codebase
+5. **Review** the analysis report
+6. **Click "Run Implementation"** to execute the workflow
+7. **Monitor** progress and test results
+
+### API Usage
+
+#### 1. Analyze Code
+
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -F "file=@your-code.zip" \
+  -F "problem_description=Implement user authentication feature"
+```
+
+**Response:**
+```json
+{
+  "project_structure": "...",
+  "feature_analysis": [...],
+  "execution_plan_suggestion": "...",
+  "codebase_path": "/app/temp/tmp_xxxxx"
+}
+```
+
+#### 2. Run Implementation & Tests
+
+```bash
+curl -X POST http://localhost:8000/api/run-and-test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "analysis_report": {...},
+    "base_directory": "/app/temp/tmp_xxxxx"
+  }'
+```
+
+#### 3. Cleanup Temporary Files
+
+```bash
+curl -X POST http://localhost:8000/api/cleanup \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/app/temp/tmp_xxxxx"}'
+```
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `GEMINI_API_KEY` | Your Gemini API key | ✅ Yes | - |
+| `GEMINI_MODEL` | Gemini model to use | No | `gemini-2.5-flash` |
+| `HOST` | Server host | No | `0.0.0.0` |
+| `PORT` | Server port | No | `8000` |
+| `LOG_LEVEL` | Logging level | No | `INFO` |
+
+### Available Gemini Models
+
+- `gemini-2.5-flash` - Fast, cost-effective (recommended)
+- `gemini-1.5-pro` - More capable, slower
+- `gemini-1.5-flash` - Balanced performance
+
+### Switching Models
+
+```bash
+# In .env file
+GEMINI_MODEL=gemini-1.5-pro
+
+# Or as environment variable
+export GEMINI_MODEL=gemini-1.5-pro
+uvicorn main:app
+```
+
+---
+
+## 🔌 API Endpoints
+
+### POST `/api/analyze`
+
+Analyze a codebase and identify feature locations.
+
+**Request:**
+- `file`: ZIP file (multipart/form-data)
+- `problem_description`: Feature requirements (text)
+
+**Response:**
+```json
+{
+  "project_structure": "string",
+  "feature_analysis": [
+    {
+      "feature_description": "string",
+      "implementation_location": [...]
+    }
+  ],
+  "execution_plan_suggestion": "string",
+  "codebase_path": "string"
+}
+```
+
+### POST `/api/run-and-test`
+
+Execute implementation workflow with testing.
+
+**Request:**
+```json
+{
+  "analysis_report": {...},
+  "base_directory": "/path/to/code"
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "feature": "...",
+      "success": true,
+      "test_results": {...}
+    }
+  ]
+}
+```
+
+### POST `/api/cleanup`
+
+Clean up temporary directories.
+
+**Request:**
+```json
+{
+  "path": "/path/to/temp/dir"
+}
+```
+
+### GET `/health`
+
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "healthy"
+}
+```
+
+---
+
+## 🧪 Testing Support
+
+### Supported Frameworks
+
+- **Python**: pytest, unittest
+- **JavaScript/TypeScript**: jest, vitest, mocha
+- **Java**: junit
+- **Go**: go test
+- **PHP**: phpunit
+- **Ruby**: rspec
+
+### Auto-Detection
+
+The system automatically:
+1. Recommends the best framework for your project
+2. Installs required dependencies
+3. Generates framework-specific tests
+4. Runs tests with appropriate commands
+
+---
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**1. Gemini CLI not found**
+```bash
+# Install globally
+npm install -g @google/gemini-cli
+
+# Verify
+which gemini
+```
+
+**2. API Key not set**
+```bash
+# Check .env file
+cat .env | grep GEMINI_API_KEY
+
+# Set manually
+export GEMINI_API_KEY=your_key
+```
+
+**3. Port already in use**
+```bash
+# Check what's using port 8000
+lsof -i :8000
+
+# Use different port
+PORT=8001 uvicorn main:app
+```
+
+**4. Docker container won't start**
+```bash
+# Check logs
+docker-compose logs code-agent
+
+# Rebuild
+docker-compose down
+docker-compose up --build
+```
+
+**5. Network/API connection issues**
+```bash
+# Test network connectivity from container
+docker exec code-agent ping -c 3 google.com
+
+# Test Gemini CLI
+docker exec code-agent gemini -p "test" --output-format json
+
+# Check if API key is set
+docker exec code-agent env | grep GEMINI_API_KEY
+
+# Verify firewall allows outbound HTTPS
+curl -I https://generativelanguage.googleapis.com
+```
+
+---
+
+## 📝 Example Workflow
+
+```bash
+# 1. Start the application
+docker-compose up -d
+
+# 2. Upload code via web interface
+# Visit http://localhost:8000
+
+# 3. Enter feature description:
+# "Add user authentication with JWT tokens"
+
+# 4. Click "Analyze Code"
+# System analyzes and identifies relevant files
+
+# 5. Click "Run Implementation"
+# Watch as the system:
+#   - Recommends testing framework
+#   - Modifies code files
+#   - Generates unit tests
+#   - Runs tests
+#   - Reports results
+
+# 6. Review results
+# See which files were modified, tests generated, and results
+```
+
+---
+
+## 📚 Additional Documentation
+
+- [Docker Deployment Guide](DOCKER.md)
+- [Architecture Deep Dive](docs/architecture.md) *(if exists)*
+- [API Reference](docs/api.md) *(if exists)*
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
+
+---
+
+## 📄 License
+
+[Your License Here]
+
+---
+
+## 🙏 Acknowledgments
+
+- **Google Gemini**: AI model powering the analysis
+- **FastAPI**: Web framework
+- **LangGraph**: Workflow orchestration
+- **Docker**: Containerization
+
+---
+
+## 📞 Support
+
+For issues and questions:
+- Open an issue on GitHub
+- Check the [troubleshooting section](#troubleshooting)
+- Review the [Docker guide](DOCKER.md)
+
+---
+
+**Built with ❤️ using Google Gemini AI**
