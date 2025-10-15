@@ -37,9 +37,12 @@ class CodeAnalysisAgent:
         Returns:
             JSON response as string (extracted from gemini-cli wrapper)
         """
+        # Get model from environment variable or use default
+        gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+        
         try:
             result = subprocess.run(
-                ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
+                ['gemini', '-m', gemini_model, '-p', prompt, '--output-format', 'json'],
                 capture_output=True,
                 text=True,
                 timeout=120,  # 2 minute timeout

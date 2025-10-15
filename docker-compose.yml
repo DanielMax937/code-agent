@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  code-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount temp directory for file operations
+      - ./temp:/app/temp
+      # Mount templates for development
+      - ./templates:/app/templates
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

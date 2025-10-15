@@ -35,6 +35,9 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     """
     import tempfile
     
+    # Get model from environment variable or use default
+    gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    
     try:
         # Create temporary file for output (avoids truncation)
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
@@ -43,7 +46,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
         try:
             # Run gemini-cli with output redirected to file
             # This avoids terminal rendering truncation issues
-            cmd = f'gemini -m gemini-2.5-flash -p {json.dumps(prompt)} --output-format json > {tmp_path}'
+            cmd = f'gemini -m {gemini_model} -p {json.dumps(prompt)} --output-format json > {tmp_path}'
             print("call gemini ut command")
             result = subprocess.run(
                 cmd,

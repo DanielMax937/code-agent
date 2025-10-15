@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     # Gemini CLI Configuration
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     class Config:
         env_file = ".env"
