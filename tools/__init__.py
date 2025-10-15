@@ -37,7 +37,15 @@ from .run_unittest import (
     run_tests,
     run_tests_and_save_report,
     run_specific_test,
+    extract_test_files_from_result,
+    generate_test_commands_for_files,
     TestExecutionError
+)
+
+from .code_modifier import (
+    modify_code,
+    modify_code_with_retry,
+    CodeModificationError
 )
 
 __all__ = [
@@ -69,6 +77,12 @@ __all__ = [
     'run_tests',
     'run_tests_and_save_report',
     'run_specific_test',
-    'TestExecutionError'
+    'extract_test_files_from_result',
+    'generate_test_commands_for_files',
+    'TestExecutionError',
+    # Code modifier functions
+    'modify_code',
+    'modify_code_with_retry',
+    'CodeModificationError'
 ]
 

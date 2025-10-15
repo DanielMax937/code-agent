@@ -1,22 +1,23 @@
 """
 LangGraph workflow for automated code modification and testing.
 
-This workflow sequences all 5 agents to automate the complete development cycle:
+This workflow sequences 4 agents to automate the complete development cycle:
 1. Generate test commands
-2. Generate code diff
-3. Apply code changes
-4. Generate unit tests
-5. Run tests (with retry logic)
+2. Modify code directly (AI-powered code modification)
+3. Generate unit tests
+4. Run tests (with retry logic)
 """
-from typing import Dict, List, Optional, TypedDict, Annotated
+import os
+import subprocess
+from typing import Dict, List, Optional, TypedDict, Annotated, Tuple
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
 from tools import (
     generate_test_commands,
-    generate_diff_for_files,
-    apply_git_diff,
+    modify_code,
     generate_unittest,
+    generate_and_save_unittest,
     run_tests
 )
 
@@ -35,8 +36,8 @@ class WorkflowState(TypedDict):
     
     # Agent outputs
     test_commands: Optional[Dict]
-    generated_diff: Optional[str]
-    apply_result: Optional[Dict]
+    modify_result: Optional[Dict]
+    changes_diff: Optional[str]  # Git diff of changes made
     generated_tests: Optional[Dict]
     test_results: Optional[Dict]
     
@@ -49,6 +50,98 @@ class WorkflowState(TypedDict):
     final_message: str
 
 
+def run_git_command(command: List[str], cwd: str) -> Tuple[bool, str]:
+    """
+    Run a git command and return success status and output.
+    
+    Args:
+        command: Git command as list (e.g., ['git', 'status'])
+        cwd: Working directory
+        
+    Returns:
+        Tuple of (success, output/error)
+    """
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        return result.returncode == 0, result.stdout if result.returncode == 0 else result.stderr
+    except Exception as e:
+        return False, str(e)
+
+
+def ensure_git_repo(base_directory: str) -> Tuple[bool, str]:
+    """
+    Ensure git repository exists and create initial commit.
+    
+    Args:
+        base_directory: Project directory
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    git_dir = os.path.join(base_directory, '.git')
+    
+    # Check if .git exists
+    if os.path.exists(git_dir):
+        return True, "Git repository already initialized"
+    
+    # Initialize git repo
+    success, output = run_git_command(['git', 'init'], base_directory)
+    if not success:
+        return False, f"Failed to initialize git: {output}"
+    
+    # Configure git user (needed for commits)
+    run_git_command(['git', 'config', 'user.name', 'Code Agent'], base_directory)
+    run_git_command(['git', 'config', 'user.email', 'agent@codeagent.local'], base_directory)
+    
+    # Add all files
+    success, output = run_git_command(['git', 'add', '.'], base_directory)
+    if not success:
+        return False, f"Failed to add files: {output}"
+    
+    # Create initial commit
+    success, output = run_git_command(
+        ['git', 'commit', '-m', 'Initial commit before code changes'],
+        base_directory
+    )
+    if not success:
+        # If nothing to commit, that's okay
+        if 'nothing to commit' in output.lower():
+            return True, "Git repository initialized (no files to commit)"
+        return False, f"Failed to commit: {output}"
+    
+    return True, "Git repository initialized and committed"
+
+
+def get_git_diff(base_directory: str) -> Tuple[bool, str]:
+    """
+    Get git diff of current changes, excluding backup files.
+    
+    Args:
+        base_directory: Project directory
+        
+    Returns:
+        Tuple of (success, diff_content)
+    """
+    # Use pathspec to exclude .backup files
+    success, diff = run_git_command(
+        ['git', 'diff', '--', '.', ':(exclude)*.backup'],
+        base_directory
+    )
+    if not success:
+        return False, f"Failed to get diff: {diff}"
+    
+    if not diff.strip():
+        return True, "# No changes detected"
+    
+    return True, diff
+
+
 def initialize_state(
     feature_description: str,
     feature_files: List[str],
@@ -56,16 +149,24 @@ def initialize_state(
     max_retries: int = 3
 ) -> WorkflowState:
     """Initialize the workflow state."""
+    # Convert all file paths to absolute paths
+    absolute_files = []
+    for file_path in feature_files:
+        if os.path.isabs(file_path):
+            absolute_files.append(file_path)
+        else:
+            absolute_files.append(os.path.join(base_directory, file_path))
+    
     return WorkflowState(
         feature_description=feature_description,
-        feature_files=feature_files,
+        feature_files=absolute_files,
         base_directory=base_directory,
         current_step="start",
         retry_count=0,
         max_retries=max_retries,
         test_commands=None,
-        generated_diff=None,
-        apply_result=None,
+        modify_result=None,
+        changes_diff=None,
         generated_tests=None,
         test_results=None,
         errors=[],
@@ -115,9 +216,9 @@ def generate_test_commands_node(state: WorkflowState) -> WorkflowState:
     return state
 
 
-def generate_diff_node(state: WorkflowState) -> WorkflowState:
-    """Node 2: Generate code diff from feature description."""
-    state["current_step"] = "generate_diff"
+def modify_code_node(state: WorkflowState) -> WorkflowState:
+    """Node 2: Modify code based on feature description."""
+    state["current_step"] = "modify_code"
     
     # Add retry context to prompt if this is a retry
     prompt = state["feature_description"]
@@ -132,60 +233,77 @@ IMPORTANT: Previous implementation failed with these test errors:
 
 Please fix these issues in the new implementation."""
         
-        state["logs"].append(f"🔄 Retry {state['retry_count']}/{state['max_retries']}: Regenerating with error context...")
+        state["logs"].append(f"🔄 Retry {state['retry_count']}/{state['max_retries']}: Modifying code with error context...")
     else:
-        state["logs"].append("Step 2: Generating code diff...")
+        state["logs"].append("Step 2: Modifying code directly...")
+    
+    # Ensure git repository and create initial commit
+    state["logs"].append("   Initializing git repository and committing current state...")
+    git_success, git_message = ensure_git_repo(state["base_directory"])
+    if git_success:
+        state["logs"].append(f"   ✅ {git_message}")
+    else:
+        state["logs"].append(f"   ⚠️  {git_message} (continuing without git tracking)")
     
     try:
-        result = generate_diff_for_files(
+        result = modify_code(
             prompt=prompt,
             file_paths=state["feature_files"],
-            base_directory=state["base_directory"]
+            base_directory=state["base_directory"],
+            create_backup=True,
+            dry_run=False
         )
         
         if result['success']:
-            state["generated_diff"] = result['diff']
-            state["logs"].append(f"✅ Generated diff for {len(state['feature_files'])} files")
+            files_modified = result.get('files_modified', 0)
+            state["logs"].append(f"✅ Modified {files_modified} file(s) successfully")
+            
+            # Log details of changes
+            for change in result.get('changes', [])[:5]:  # Show first 5
+                file_name = change.get('file', 'unknown')
+                status = change.get('status', 'unknown')
+                state["logs"].append(f"   • {file_name}: {status}")
+            
+            # Get git diff of changes - this is the source of truth
+            state["logs"].append("   Capturing changes with git diff...")
+            diff_success, diff_content = get_git_diff(state["base_directory"])
+            
+            if diff_success:
+                state["changes_diff"] = diff_content
+                diff_lines = len(diff_content.split('\n'))
+                state["logs"].append(f"   ✅ Captured diff ({diff_lines} lines)")
+                
+                # Parse git diff to extract modified files
+                modified_files = []
+                for line in diff_content.split('\n'):
+                    if line.startswith('diff --git'):
+                        # Extract file path: "diff --git a/path b/path"
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            file_path = parts[2][2:]  # Remove "a/" prefix
+                            modified_files.append(file_path)
+                
+                # Set modify_result based on git diff (source of truth)
+                state["modify_result"] = {
+                    "success": True,
+                    "source": "git_diff",
+                    "diff": diff_content,
+                    "files_modified": len(modified_files),
+                    "modified_files": modified_files,
+                    "diff_lines": diff_lines
+                }
+            else:
+                state["logs"].append(f"   ⚠️  Could not capture diff: {diff_content}")
+                state["changes_diff"] = None
+                # Fallback to AI result if git diff fails
+                state["modify_result"] = result
         else:
-            error = f"Failed to generate diff: {result.get('error', 'Unknown error')}"
+            error = f"Failed to modify code: {result.get('error', 'Unknown error')}"
             state["errors"].append(error)
             state["logs"].append(f"❌ {error}")
             
     except Exception as e:
-        error = f"Error in generate_diff: {str(e)}"
-        state["errors"].append(error)
-        state["logs"].append(f"❌ {error}")
-    
-    return state
-
-
-def apply_code_change_node(state: WorkflowState) -> WorkflowState:
-    """Node 3: Apply the generated diff to the codebase."""
-    state["current_step"] = "apply_code_change"
-    state["logs"].append("Step 3: Applying code changes...")
-    
-    if not state["generated_diff"]:
-        error = "No diff to apply"
-        state["errors"].append(error)
-        state["logs"].append(f"❌ {error}")
-        return state
-    
-    try:
-        result = apply_git_diff(
-            diff_content=state["generated_diff"],
-            base_directory=state["base_directory"]
-        )
-        
-        if result['successful_files'] > 0:
-            state["apply_result"] = result
-            state["logs"].append(f"✅ Modified {result['successful_files']} files successfully")
-        else:
-            error = f"Failed to apply changes: {result.get('error', 'No files modified')}"
-            state["errors"].append(error)
-            state["logs"].append(f"❌ {error}")
-            
-    except Exception as e:
-        error = f"Error in apply_code_change: {str(e)}"
+        error = f"Error in modify_code: {str(e)}"
         state["errors"].append(error)
         state["logs"].append(f"❌ {error}")
     
@@ -193,34 +311,55 @@ def apply_code_change_node(state: WorkflowState) -> WorkflowState:
 
 
 def generate_unittest_node(state: WorkflowState) -> WorkflowState:
-    """Node 4: Generate unit tests for the changes."""
+    """Node 3: Generate unit tests for the changes."""
     state["current_step"] = "generate_unittest"
-    state["logs"].append("Step 4: Generating unit tests...")
+    state["logs"].append("Step 3: Generating unit tests...")
     
     try:
+        # Build test description with git diff context
+        diff_context = ""
+        if state.get("changes_diff"):
+            diff_context = f"""
+
+CHANGES MADE (Git Diff):
+```diff
+{state["changes_diff"]}
+```
+
+Generate tests specifically for the changes shown in the diff above.
+"""
+        
         # Generate tests for each modified file
         test_results = []
         
         for file_path in state["feature_files"]:
             test_description = f"""
 Generate comprehensive unit tests for the feature: {state['feature_description']}
+{diff_context}
 
 Test requirements:
 - Test all edge cases
 - Test error handling
 - Test normal operation
 - Use appropriate assertions
+- Focus on the specific changes made to this file
 """
             
-            result = generate_unittest(
+            print(f"Generating tests for {file_path}")
+            result = generate_and_save_unittest(
                 source_file=file_path,
                 test_description=test_description,
+                test_commands_result=state.get("test_commands"),
+                git_diff=state.get("changes_diff"),
                 base_directory=state["base_directory"]
             )
             
+            
             if result['success']:
                 test_results.append(result)
-                state["logs"].append(f"✅ Generated tests for {file_path}")
+                test_file = result.get('output_file', result.get('test_file_name', 'test file'))
+                state["logs"].append(f"✅ Generated and saved tests for {file_path}")
+                state["logs"].append(f"   Test file: {test_file}")
             else:
                 state["logs"].append(f"⚠️  Could not generate tests for {file_path}: {result.get('error', 'Unknown')}")
         
@@ -245,14 +384,16 @@ Test requirements:
 
 
 def run_tests_node(state: WorkflowState) -> WorkflowState:
-    """Node 5: Run the tests and capture results."""
+    """Node 4: Run the tests and capture results."""
     state["current_step"] = "run_tests"
-    state["logs"].append("Step 5: Running unit tests...")
+    state["logs"].append("Step 4: Running unit tests...")
     
     try:
         result = run_tests(
             directory=state["base_directory"],
-            with_coverage=True
+            with_coverage=True,
+            test_commands_result=state.get("test_commands"),
+            generated_tests=state.get("generated_tests")
         )
         
         state["test_results"] = result
@@ -310,24 +451,22 @@ def build_workflow() -> StateGraph:
     
     # Add nodes
     workflow.add_node("generate_test_commands", generate_test_commands_node)
-    workflow.add_node("generate_diff", generate_diff_node)
-    # workflow.add_node("apply_code_change", apply_code_change_node)
-    # workflow.add_node("generate_unittest", generate_unittest_node)
-    # workflow.add_node("run_tests", run_tests_node)
+    workflow.add_node("modify_code", modify_code_node)
+    workflow.add_node("generate_unittest", generate_unittest_node)
+    workflow.add_node("run_tests", run_tests_node)
     
     # Define the flow
     workflow.set_entry_point("generate_test_commands")
-    workflow.add_edge("generate_test_commands", "generate_diff")
-    # workflow.add_edge("generate_diff", "apply_code_change")
-    # workflow.add_edge("apply_code_change", "generate_unittest")
-    # workflow.add_edge("generate_unittest", "run_tests")
+    workflow.add_edge("generate_test_commands", "modify_code")
+    workflow.add_edge("modify_code", "generate_unittest")
+    workflow.add_edge("generate_unittest", "run_tests")
     
     # Add conditional edge for retry logic
     # workflow.add_conditional_edges(
     #     "run_tests",
     #     should_retry,
     #     {
-    #         "retry": "generate_diff",  # Retry from diff generation
+    #         "retry": "modify_code",  # Retry from code modification
     #         "end": END
     #     }
     # )

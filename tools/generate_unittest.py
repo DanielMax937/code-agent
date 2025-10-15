@@ -175,17 +175,19 @@ def detect_test_framework(directory: str) -> str:
 def generate_unittest(
     source_file: str,
     test_description: str,
-    test_framework: Optional[str] = None,
-    output_file: Optional[str] = None
+    test_commands_result: Optional[Dict] = None,
+    git_diff: Optional[str] = None,
+    base_directory: Optional[str] = None
 ) -> Dict[str, any]:
     """
-    Generate unit test code for a source file.
+    Generate unit test code for a source file based on git diff changes.
     
     Args:
         source_file: Path to the source file to test
         test_description: Description of what to test
-        test_framework: Test framework to use (auto-detected if None)
-        output_file: Where to save the test file (auto-generated if None)
+        test_commands_result: Result from generate_test_commands (framework info)
+        git_diff: Git diff showing actual changes made
+        base_directory: Base directory of the project
         
     Returns:
         Dictionary with generated test code and metadata
@@ -204,35 +206,62 @@ def generate_unittest(
     source_code = read_source_file(source_file)
     
     # Determine project directory
-    project_dir = os.path.dirname(os.path.abspath(source_file))
+    if base_directory is None:
+        base_directory = os.path.dirname(os.path.abspath(source_file))
     
-    # Detect framework if not provided
-    if test_framework is None:
-        test_framework = detect_test_framework(project_dir)
+    # Extract framework info from test_commands_result
+    if test_commands_result and test_commands_result.get('success'):
+        test_framework = test_commands_result.get('recommended_framework', 'pytest')
+        test_commands = test_commands_result.get('commands', [])
+        setup_commands = test_commands_result.get('setup_commands', [])
+        framework_reason = test_commands_result.get('reason', '')
+    else:
+        # Fallback to auto-detection
+        test_framework = detect_test_framework(base_directory)
+        test_commands = []
+        setup_commands = []
+        framework_reason = ''
     
-    # Auto-generate output file if not provided
-    if output_file is None:
-        base_name = os.path.basename(source_file)
-        name_without_ext = os.path.splitext(base_name)[0]
-        
-        if test_framework == 'pytest':
-            output_file = f"test_{base_name}"
-        elif test_framework in ['jest', 'vitest', 'mocha']:
-            output_file = f"{name_without_ext}.test{os.path.splitext(base_name)[1]}"
-        elif test_framework == 'junit':
-            output_file = f"{name_without_ext}Test.java"
-        elif test_framework == 'go':
-            output_file = f"{name_without_ext}_test.go"
-        else:
-            output_file = f"test_{base_name}"
+    # Auto-generate output file
+    base_name = os.path.basename(source_file)
+    name_without_ext = os.path.splitext(base_name)[0]
+    
+    if test_framework in ['pytest']:
+        output_file = f"test_{base_name}"
+    elif test_framework in ['jest', 'vitest', 'mocha', 'Jest with React Testing Library']:
+        output_file = f"{name_without_ext}.test{os.path.splitext(base_name)[1]}"
+    elif test_framework == 'junit':
+        output_file = f"{name_without_ext}Test.java"
+    elif test_framework == 'go':
+        output_file = f"{name_without_ext}_test.go"
+    else:
+        output_file = f"test_{base_name}"
+    
+    # Build git diff context
+    diff_context = ""
+    if git_diff:
+        diff_context = f"""
+
+GIT DIFF - ACTUAL CHANGES MADE:
+```diff
+{git_diff}
+```
+
+The git diff above shows the exact changes made to the code. Generate tests specifically for these changes.
+Focus on testing the new/modified functionality shown in the diff.
+"""
     
     # Build prompt for Gemini
-    prompt = f"""You are an expert test engineer. Generate comprehensive unit tests for the given source code.
+    prompt = f"""You are an expert test engineer. Generate comprehensive unit tests for the code changes.
 
 TEST FRAMEWORK: {test_framework}
+{f"Framework Choice: {framework_reason}" if framework_reason else ""}
 
 SOURCE FILE: {os.path.basename(source_file)}
+```
 {source_code}
+```
+{diff_context}
 
 TEST REQUIREMENTS:
 {test_description}
@@ -240,39 +269,32 @@ TEST REQUIREMENTS:
 TASK:
 Generate complete, production-ready unit tests that:
 1. Follow {test_framework} best practices and conventions
-2. Test the functionality described in the requirements
+2. Test the specific changes shown in the git diff (if provided)
 3. Include edge cases and error handling tests
 4. Use appropriate assertions and test structure
 5. Include setup/teardown if needed
 6. Add helpful test descriptions/docstrings
+7. Focus on NEW or MODIFIED functionality
 
-Return your response as a JSON object with this EXACT structure:
+Return your response as a JSON object with this structure:
 {{
   "test_code": "complete test file content here",
-  "test_file_name": "suggested test file name",
-  "framework": "{test_framework}",
-  "test_cases": [
-    {{
-      "name": "test_case_name",
-      "description": "what this test validates"
-    }}
-  ],
-  "setup_required": "any setup instructions or dependencies",
-  "run_command": "command to run these tests"
+  "test_file_name": "{output_file}"
 }}
 
 IMPORTANT:
 - Generate complete, runnable test code
-- Follow the framework's conventions exactly
+- Follow {test_framework} conventions exactly
 - Include all necessary imports
 - Make tests independent and isolated
 - Use descriptive test names
 - Return ONLY valid JSON, no additional text
+- Focus tests on the changes shown in the git diff
 """
     
     # Call Gemini using same pattern as agent.py
     try:
-        response_text = _call_gemini(prompt, cwd=project_dir)
+        response_text = _call_gemini(prompt, cwd=base_directory)
         
         # Parse JSON response
         try:
@@ -283,15 +305,20 @@ IMPORTANT:
                 json_str = response_text[start:end]
                 test_data = json.loads(json_str)
                 
+                # Extract run command from test_commands_result
+                run_command = ""
+                if test_commands and len(test_commands) > 0:
+                    run_command = test_commands[0].get('command', '')
+                
                 return {
                     "success": True,
                     "test_code": test_data.get("test_code", ""),
                     "test_file_name": test_data.get("test_file_name", output_file),
-                    "framework": test_data.get("framework", test_framework),
-                    "test_cases": test_data.get("test_cases", []),
-                    "setup_required": test_data.get("setup_required", ""),
-                    "run_command": test_data.get("run_command", ""),
-                    "source_file": source_file
+                    "framework": test_framework,
+                    "run_command": run_command,
+                    "setup_commands": setup_commands,
+                    "source_file": source_file,
+                    "used_git_diff": bool(git_diff)
                 }
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON: {e}")
@@ -401,7 +428,9 @@ def generate_and_save_unittest(
     source_file: str,
     test_description: str,
     output_file: Optional[str] = None,
-    test_framework: Optional[str] = None
+    test_commands_result: Optional[Dict] = None,
+    git_diff: Optional[str] = None,
+    base_directory: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Generate unit test and save to file.
@@ -410,7 +439,9 @@ def generate_and_save_unittest(
         source_file: Source file to test
         test_description: What to test
         output_file: Where to save (auto-generated if None)
-        test_framework: Framework to use (auto-detected if None)
+        test_commands_result: Result from generate_test_commands
+        git_diff: Git diff showing changes
+        base_directory: Base directory of the project
         
     Returns:
         Dictionary with results
@@ -418,12 +449,17 @@ def generate_and_save_unittest(
     result = generate_unittest(
         source_file=source_file,
         test_description=test_description,
-        test_framework=test_framework,
-        output_file=output_file
+        test_commands_result=test_commands_result,
+        git_diff=git_diff,
+        base_directory=base_directory
     )
     
     if result['success']:
         test_file = output_file or result['test_file_name']
+        
+        # Ensure test file is in the correct directory
+        if base_directory and not os.path.isabs(test_file):
+            test_file = os.path.join(base_directory, test_file)
         
         if save_test_file(result['test_code'], test_file):
             result['output_file'] = test_file

@@ -13,6 +13,60 @@ from pathlib import Path
 from datetime import datetime
 
 
+def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
+    """
+    Call gemini-cli with a prompt and return the JSON response.
+    
+    Args:
+        prompt: The prompt to send to Gemini
+        cwd: Current working directory to execute gemini from (optional)
+        
+    Returns:
+        JSON response as string (extracted from gemini-cli wrapper)
+        
+    Raises:
+        TestExecutionError: If the call fails
+    """
+    try:
+        result = subprocess.run(
+            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2 minute timeout
+            cwd=cwd
+        )
+        
+        if result.returncode != 0:
+            raise TestExecutionError(f"Gemini CLI error: {result.stderr}")
+        
+        # Parse the gemini-cli JSON wrapper
+        gemini_output = json.loads(result.stdout.strip())
+        response_text = gemini_output.get('response', '')
+        
+        # Remove markdown code blocks if present
+        if '```json' in response_text:
+            start = response_text.find('```json') + 7
+            end = response_text.rfind('```')
+            if start > 6 and end > start:
+                response_text = response_text[start:end].strip()
+        elif '```' in response_text:
+            start = response_text.find('```') + 3
+            end = response_text.rfind('```')
+            if start > 2 and end > start:
+                response_text = response_text[start:end].strip()
+        
+        return response_text
+        
+    except subprocess.TimeoutExpired:
+        raise TestExecutionError("Gemini CLI request timed out")
+    except FileNotFoundError:
+        raise TestExecutionError("gemini-cli not found. Please ensure it's installed and in PATH")
+    except json.JSONDecodeError as e:
+        raise TestExecutionError(f"Failed to parse Gemini CLI output: {str(e)}")
+    except Exception as e:
+        raise TestExecutionError(f"Error calling Gemini CLI: {str(e)}")
+
+
 class TestExecutionError(Exception):
     """Exception raised when test execution fails."""
     pass
@@ -241,12 +295,137 @@ def parse_jest_output(output: str, error: str) -> Dict:
     return results
 
 
+def extract_test_files_from_result(generated_tests: Dict) -> List[str]:
+    """
+    Extract test file paths from generated_tests result.
+    
+    Args:
+        generated_tests: Result from generate_unittest containing test files
+        
+    Returns:
+        List of test file paths
+    """
+    test_files = []
+    
+    if generated_tests and generated_tests.get('success'):
+        tests = generated_tests.get('tests', [])
+        for test in tests:
+            if test.get('success'):
+                # Try to get output_file first (saved location), then test_file_name
+                test_file = test.get('output_file') or test.get('test_file_name')
+                if test_file and os.path.exists(test_file):
+                    test_files.append(test_file)
+    
+    return test_files
+
+
+def generate_test_commands_for_files(
+    test_files: List[str],
+    framework: str,
+    base_directory: str
+) -> Dict[str, str]:
+    """
+    Use Gemini to generate specific commands for each test file.
+    
+    Args:
+        test_files: List of test file paths
+        framework: Testing framework to use
+        base_directory: Base directory of the project
+        
+    Returns:
+        Dictionary mapping test file to command
+    """
+    if not test_files:
+        return {}
+    
+    # Build prompt for Gemini
+    test_files_str = '\n'.join([f"- {os.path.basename(f)}" for f in test_files])
+    
+    prompt = f"""You are a testing expert. Generate specific commands to run each test file individually.
+
+TESTING FRAMEWORK: {framework}
+
+TEST FILES:
+{test_files_str}
+
+TASK:
+For each test file, provide the exact command to run ONLY that specific test file.
+
+Return a JSON object with this structure:
+{{
+  "commands": [
+    {{
+      "file": "test_auth.py",
+      "command": "pytest test_auth.py -v"
+    }},
+    {{
+      "file": "test_login.py",
+      "command": "pytest test_login.py -v"
+    }}
+  ]
+}}
+
+IMPORTANT:
+- Generate ONE command per test file
+- Each command should run ONLY that specific file
+- Use proper {framework} syntax
+- Include verbose/detailed output flags
+- Return ONLY valid JSON, no additional text
+
+Generate the commands:
+"""
+    
+    try:
+        response_text = _call_gemini(prompt, cwd=base_directory)
+        
+        # Parse JSON response
+        start = response_text.find('{')
+        end = response_text.rfind('}') + 1
+        
+        if start != -1 and end > start:
+            json_str = response_text[start:end]
+            result = json.loads(json_str)
+            
+            # Build file->command mapping
+            commands_map = {}
+            for cmd_info in result.get('commands', []):
+                file_name = cmd_info.get('file')
+                command = cmd_info.get('command')
+                
+                # Match file name to full path
+                for test_file in test_files:
+                    if os.path.basename(test_file) == file_name:
+                        commands_map[test_file] = command
+                        break
+            
+            return commands_map
+    except Exception as e:
+        print(f"Error generating commands with Gemini: {e}")
+        
+        # Fallback: generate basic commands
+        commands_map = {}
+        for test_file in test_files:
+            file_name = os.path.basename(test_file)
+            if framework == 'pytest':
+                commands_map[test_file] = f"pytest {file_name} -v"
+            elif framework in ['jest', 'vitest']:
+                commands_map[test_file] = f"npx {framework} {file_name} --verbose"
+            else:
+                commands_map[test_file] = f"{framework} {file_name}"
+        
+        return commands_map
+    
+    return {}
+
+
 def run_tests(
     directory: str,
     test_file: Optional[str] = None,
     framework: Optional[str] = None,
     with_coverage: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    test_commands_result: Optional[Dict] = None,
+    generated_tests: Optional[Dict] = None
 ) -> Dict[str, any]:
     """
     Run unit tests and return results.
@@ -257,6 +436,8 @@ def run_tests(
         framework: Test framework to use (auto-detected if None)
         with_coverage: Include coverage report
         verbose: Verbose output
+        test_commands_result: Result from generate_test_commands (framework info)
+        generated_tests: Result from generate_unittest (test files to run)
         
     Returns:
         Dictionary with test results
@@ -268,12 +449,130 @@ def run_tests(
             "results": None
         }
     
-    # Detect framework if not provided
-    if framework is None:
+    # Extract framework from test_commands_result
+    if test_commands_result and test_commands_result.get('success'):
+        framework = test_commands_result.get('recommended_framework', framework)
+    elif framework is None:
         framework = detect_test_framework(directory)
     
-    # Get test command
-    cmd = get_test_command(framework, test_file)
+    # NEW: Extract test files from generated_tests and generate commands for each
+    if generated_tests:
+        test_files = extract_test_files_from_result(generated_tests)
+        
+        if test_files:
+            print(f"Found {len(test_files)} test files to run:")
+            for tf in test_files:
+                print(f"  - {os.path.basename(tf)}")
+            
+            # Generate commands for each test file using Gemini
+            print(f"Generating commands for each test file using {framework}...")
+            print("test_files", test_files)
+            test_commands = generate_test_commands_for_files(test_files, framework, directory)
+            if not test_commands:
+                return {
+                    "success": False,
+                    "error": "Failed to generate test commands",
+                    "results": None
+                }
+            
+            # Run each test file individually
+            all_results = []
+            total_passed = 0
+            total_failed = 0
+            total_tests = 0
+            print("test_commands", test_commands)
+            for test_file, cmd_str in test_commands.items():
+                print(f"\nRunning: {cmd_str}")
+                cmd = cmd_str.split()
+                
+                # Add coverage flags if needed
+                if with_coverage and framework == 'pytest':
+                    if '--cov' not in cmd:
+                        cmd.extend(['--cov', '--cov-report=term'])
+                
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        cwd=directory,
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    
+                    # Parse output
+                    if framework == 'pytest':
+                        parsed = parse_pytest_output(result.stdout, result.stderr)
+                    elif framework in ['jest', 'vitest']:
+                        parsed = parse_jest_output(result.stdout, result.stderr)
+                    else:
+                        parsed = {
+                            "tests_run": 0,
+                            "tests_passed": 0,
+                            "tests_failed": 0,
+                            "test_cases": []
+                        }
+                    
+                    total_passed += parsed.get('tests_passed', 0)
+                    total_failed += parsed.get('tests_failed', 0)
+                    total_tests += parsed.get('tests_run', 0)
+                    
+                    all_results.append({
+                        "test_file": os.path.basename(test_file),
+                        "command": cmd_str,
+                        "exit_code": result.returncode,
+                        "success": result.returncode == 0,
+                        "results": parsed,
+                        "stdout": result.stdout if verbose else result.stdout[:500],
+                        "stderr": result.stderr if verbose else result.stderr[:500]
+                    })
+                    
+                except subprocess.TimeoutExpired:
+                    all_results.append({
+                        "test_file": os.path.basename(test_file),
+                        "command": cmd_str,
+                        "success": False,
+                        "error": "Test execution timed out"
+                    })
+                except Exception as e:
+                    all_results.append({
+                        "test_file": os.path.basename(test_file),
+                        "command": cmd_str,
+                        "success": False,
+                        "error": str(e)
+                    })
+            
+            # Return aggregated results
+            overall_success = total_failed == 0 and total_tests > 0
+            
+            return {
+                "success": overall_success,
+                "framework": framework,
+                "test_files_run": len(test_files),
+                "individual_results": all_results,
+                "summary": {
+                    "total": total_tests,
+                    "passed": total_passed,
+                    "failed": total_failed,
+                    "files_tested": len(test_files)
+                },
+                "results": {
+                    "tests_run": total_tests,
+                    "tests_passed": total_passed,
+                    "tests_failed": total_failed,
+                    "failures": []  # Aggregate failures if needed
+                }
+            }
+    
+    # Fallback: Original behavior if no generated_tests provided
+    if test_commands_result and test_commands_result.get('commands'):
+        commands = test_commands_result.get('commands', [])
+        if commands and len(commands) > 0:
+            cmd_str = commands[0].get('command', '')
+            cmd = cmd_str.split() if cmd_str else get_test_command(framework, test_file)
+        else:
+            cmd = get_test_command(framework, test_file)
+    else:
+        cmd = get_test_command(framework, test_file)
     
     # Add coverage flags
     if with_coverage:
