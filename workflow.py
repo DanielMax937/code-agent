@@ -422,6 +422,17 @@ def run_tests_node(state: WorkflowState) -> WorkflowState:
     return state
 
 
+def check_continue_or_end(state: WorkflowState) -> str:
+    """Check if workflow should continue or terminate due to errors."""
+    # If there are errors, terminate
+    if state["errors"]:
+        state["final_message"] = f"Workflow terminated due to error in {state['current_step']}: {state['errors'][-1]}"
+        return "end"
+    
+    # Otherwise continue
+    return "continue"
+
+
 def should_retry(state: WorkflowState) -> str:
     """Determine if we should retry after failed tests."""
     # If tests passed, we're done
@@ -455,21 +466,41 @@ def build_workflow() -> StateGraph:
     workflow.add_node("generate_unittest", generate_unittest_node)
     workflow.add_node("run_tests", run_tests_node)
     
-    # Define the flow
+    # Define the flow with error checking after each step
     workflow.set_entry_point("generate_test_commands")
-    workflow.add_edge("generate_test_commands", "modify_code")
-    workflow.add_edge("modify_code", "generate_unittest")
-    workflow.add_edge("generate_unittest", "run_tests")
     
-    # Add conditional edge for retry logic
-    # workflow.add_conditional_edges(
-    #     "run_tests",
-    #     should_retry,
-    #     {
-    #         "retry": "modify_code",  # Retry from code modification
-    #         "end": END
-    #     }
-    # )
+    # After generate_test_commands: check for errors
+    workflow.add_conditional_edges(
+        "generate_test_commands",
+        check_continue_or_end,
+        {
+            "continue": "modify_code",
+            "end": END
+        }
+    )
+    
+    # After modify_code: check for errors
+    workflow.add_conditional_edges(
+        "modify_code",
+        check_continue_or_end,
+        {
+            "continue": "generate_unittest",
+            "end": END
+        }
+    )
+    
+    # After generate_unittest: check for errors
+    workflow.add_conditional_edges(
+        "generate_unittest",
+        check_continue_or_end,
+        {
+            "continue": "run_tests",
+            "end": END
+        }
+    )
+    
+    # After run_tests: always end (can add retry logic later if needed)
+    workflow.add_edge("run_tests", END)
     
     return workflow.compile()
 

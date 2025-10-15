@@ -22,6 +22,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     Call gemini-cli with a prompt and return the JSON response.
     
     This follows the same pattern as agent.py for consistency.
+    Uses file redirection to avoid output truncation issues.
     
     Args:
         prompt: The prompt to send to Gemini
@@ -33,38 +34,59 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     Raises:
         TestCommandGenerationError: If the call fails
     """
+    import tempfile
+    
     try:
-        result = subprocess.run(
-            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
-            capture_output=True,
-            text=True,
-            timeout=120,  # 2 minute timeout
-            cwd=cwd
-        )
+        # Create temporary file for output (avoids truncation)
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
         
-        if result.returncode != 0:
-            raise TestCommandGenerationError(f"Gemini CLI error: {result.stderr}")
-        
-        # Parse the gemini-cli JSON wrapper
-        gemini_output = json.loads(result.stdout.strip())
-        response_text = gemini_output.get('response', '')
-        
-        # Remove markdown code blocks if present
-        if '```json' in response_text:
-            # Extract JSON from markdown code blocks
-            start = response_text.find('```json') + 7
-            end = response_text.rfind('```')
-            if start > 6 and end > start:
-                response_text = response_text[start:end].strip()
-        elif '```' in response_text:
-            # Handle generic code blocks
-            start = response_text.find('```') + 3
-            end = response_text.rfind('```')
-            if start > 2 and end > start:
-                response_text = response_text[start:end].strip()
-        
-        print(f"Gemini CLI final response for test commands: {response_text[:200]}...")
-        return response_text
+        try:
+            # Run gemini-cli with output redirected to file
+            # This avoids terminal rendering truncation issues
+            cmd = f'gemini -m gemini-2.5-flash -p {json.dumps(prompt)} --output-format json > {tmp_path}'
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=cwd,
+                timeout=120,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                raise TestCommandGenerationError(f"Gemini CLI error: {result.stderr}")
+            
+            # Read the complete output from file
+            with open(tmp_path, 'r') as f:
+                output = f.read()
+            
+            # Parse the gemini-cli JSON wrapper
+            gemini_output = json.loads(output.strip())
+            response_text = gemini_output.get('response', '')
+            
+            # Remove markdown code blocks if present
+            if '```json' in response_text:
+                # Extract JSON from markdown code blocks
+                start = response_text.find('```json') + 7
+                end = response_text.rfind('```')
+                if start > 6 and end > start:
+                    response_text = response_text[start:end].strip()
+            elif '```' in response_text:
+                # Handle generic code blocks
+                start = response_text.find('```') + 3
+                end = response_text.rfind('```')
+                if start > 2 and end > start:
+                    response_text = response_text[start:end].strip()
+            
+            print(f"Gemini CLI final response for test commands: {response_text[:200]}...")
+            return response_text
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         
     except subprocess.TimeoutExpired:
         raise TestCommandGenerationError("Gemini CLI request timed out")

@@ -16,6 +16,7 @@ from datetime import datetime
 def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     """
     Call gemini-cli with a prompt and return the JSON response.
+    Uses file redirection to avoid output truncation issues.
     
     Args:
         prompt: The prompt to send to Gemini
@@ -27,35 +28,56 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     Raises:
         TestExecutionError: If the call fails
     """
+    import tempfile
+    
     try:
-        result = subprocess.run(
-            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
-            capture_output=True,
-            text=True,
-            timeout=120,  # 2 minute timeout
-            cwd=cwd
-        )
+        # Create temporary file for output (avoids truncation)
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
         
-        if result.returncode != 0:
-            raise TestExecutionError(f"Gemini CLI error: {result.stderr}")
-        
-        # Parse the gemini-cli JSON wrapper
-        gemini_output = json.loads(result.stdout.strip())
-        response_text = gemini_output.get('response', '')
-        
-        # Remove markdown code blocks if present
-        if '```json' in response_text:
-            start = response_text.find('```json') + 7
-            end = response_text.rfind('```')
-            if start > 6 and end > start:
-                response_text = response_text[start:end].strip()
-        elif '```' in response_text:
-            start = response_text.find('```') + 3
-            end = response_text.rfind('```')
-            if start > 2 and end > start:
-                response_text = response_text[start:end].strip()
-        
-        return response_text
+        try:
+            # Run gemini-cli with output redirected to file
+            # This avoids terminal rendering truncation issues
+            cmd = f'gemini -m gemini-2.5-flash -p {json.dumps(prompt)} --output-format json > {tmp_path}'
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=cwd,
+                timeout=120,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                raise TestExecutionError(f"Gemini CLI error: {result.stderr}")
+            
+            # Read the complete output from file
+            with open(tmp_path, 'r') as f:
+                output = f.read()
+            
+            # Parse the gemini-cli JSON wrapper
+            gemini_output = json.loads(output.strip())
+            response_text = gemini_output.get('response', '')
+            
+            # Remove markdown code blocks if present
+            if '```json' in response_text:
+                start = response_text.find('```json') + 7
+                end = response_text.rfind('```')
+                if start > 6 and end > start:
+                    response_text = response_text[start:end].strip()
+            elif '```' in response_text:
+                start = response_text.find('```') + 3
+                end = response_text.rfind('```')
+                if start > 2 and end > start:
+                    response_text = response_text[start:end].strip()
+            
+            return response_text
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         
     except subprocess.TimeoutExpired:
         raise TestExecutionError("Gemini CLI request timed out")
@@ -341,7 +363,7 @@ def generate_test_commands_for_files(
     # Build prompt for Gemini
     test_files_str = '\n'.join([f"- {os.path.basename(f)}" for f in test_files])
     
-    prompt = f"""You are a testing expert. Generate specific commands to run each test file individually.
+    prompt = f"""You are a testing expert. Analyze the project and generate comprehensive setup and test execution commands.
 
 TESTING FRAMEWORK: {framework}
 
@@ -349,26 +371,63 @@ TEST FILES:
 {test_files_str}
 
 TASK:
-For each test file, provide the exact command to run ONLY that specific test file.
+1. Install ALL required dependencies:
+   a) Project dependencies (runtime dependencies)
+   b) Development dependencies (testing frameworks and tools)
+   c) Type definitions if TypeScript
+2. For each test file, provide the command to run it
 
-Return a JSON object with this structure:
+Return a JSON object:
 {{
+  "setup_commands": [
+    "npm install",
+    "npm install --save-dev jest @types/jest ts-jest",
+    "npm run build"
+  ],
   "commands": [
     {{
-      "file": "test_auth.py",
-      "command": "pytest test_auth.py -v"
+      "file": "test_auth.test.ts",
+      "command": "npm test -- test_auth.test.ts"
     }},
     {{
-      "file": "test_login.py",
-      "command": "pytest test_login.py -v"
+      "file": "test_login.test.ts",
+      "command": "npm test -- test_login.test.ts"
     }}
   ]
 }}
 
+CRITICAL DEPENDENCY RULES:
+
+For JavaScript/TypeScript projects:
+- Install project deps: "npm install" or "pnpm install" or "yarn install"
+- Install test framework:
+  * Jest: "npm install --save-dev jest @types/jest ts-jest @jest/globals"
+  * Vitest: "npm install --save-dev vitest @vitest/ui"
+  * Mocha: "npm install --save-dev mocha @types/mocha chai"
+- Install TypeScript deps if .ts files: "@types/node typescript ts-node"
+- Build if needed: "npm run build" or "tsc"
+
+For Python projects:
+- Install deps: "pip install -r requirements.txt"
+- Install test framework:
+  * pytest: "pip install pytest pytest-cov"
+  * unittest: (built-in, no install needed)
+
+CRITICAL TEST COMMAND RULES:
+
+For JavaScript/TypeScript:
+- PREFER npm scripts: "npm test -- <file>" or "npm run test:specific <file>"
+- Alternative with npx: "npx jest <file> --verbose"
+- Alternative with package manager: "pnpm test <file>"
+
+For Python:
+- Use pytest: "pytest <file> -v"
+- Or python -m: "python -m pytest <file> -v"
+
 IMPORTANT:
-- Generate ONE command per test file
-- Each command should run ONLY that specific file
-- Use proper {framework} syntax
+- Include ALL dependencies (project + dev + testing)
+- Use package.json scripts when available (npm test, npm run test)
+- For each test file, provide ONE specific command
 - Include verbose/detailed output flags
 - Return ONLY valid JSON, no additional text
 
@@ -385,6 +444,30 @@ Generate the commands:
         if start != -1 and end > start:
             json_str = response_text[start:end]
             result = json.loads(json_str)
+            
+            # Extract setup commands
+            setup_commands = result.get('setup_commands', [])
+            
+            # Run setup commands if any
+            if setup_commands:
+                print(f"\nRunning {len(setup_commands)} setup command(s)...")
+                for setup_cmd in setup_commands:
+                    print(f"  Setup: {setup_cmd}")
+                    try:
+                        setup_result = subprocess.run(
+                            setup_cmd,
+                            shell=True,
+                            cwd=base_directory,
+                            capture_output=True,
+                            text=True,
+                            timeout=300
+                        )
+                        if setup_result.returncode != 0:
+                            print(f"    Warning: Setup command failed: {setup_result.stderr[:200]}")
+                        else:
+                            print(f"    ✓ Success")
+                    except Exception as e:
+                        print(f"    Warning: Setup command error: {e}")
             
             # Build file->command mapping
             commands_map = {}
@@ -491,13 +574,56 @@ def run_tests(
                         cmd.extend(['--cov', '--cov-report=term'])
                 
                 try:
-                    result = subprocess.run(
-                        cmd,
-                        cwd=directory,
-                        capture_output=True,
-                        text=True,
-                        timeout=300
-                    )
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            cwd=directory,
+                            capture_output=True,
+                            text=True,
+                            timeout=300
+                        )
+                    except FileNotFoundError:
+                        # If command not found, try alternative approaches for JS frameworks
+                        if framework in ['jest', 'vitest', 'mocha']:
+                            # Try 1: Add npx prefix
+                            if not cmd[0].startswith('npx') and cmd[0] not in ['npm', 'pnpm', 'yarn']:
+                                print(f"  ⚠️  Command not found, retrying with npx...")
+                                cmd = ['npx'] + cmd
+                                cmd_str = ' '.join(cmd)
+                                print(f"  Retry: {cmd_str}")
+                                result = subprocess.run(
+                                    cmd,
+                                    cwd=directory,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=300
+                                )
+                            # Try 2: Use npm test if npx also fails
+                            else:
+                                print(f"  ⚠️  Command not found, trying npm test...")
+                                test_file_name = os.path.basename(test_file)
+                                cmd = ['npm', 'test', '--', test_file_name]
+                                cmd_str = ' '.join(cmd)
+                                print(f"  Retry: {cmd_str}")
+                                result = subprocess.run(
+                                    cmd,
+                                    cwd=directory,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=300
+                                )
+                        else:
+                            raise
+                    
+                    # Display test output immediately
+                    print("\n" + "="*70)
+                    if result.stdout:
+                        print("OUTPUT:")
+                        print(result.stdout)
+                    if result.stderr and result.returncode != 0:
+                        print("\nERROR OUTPUT:")
+                        print(result.stderr)
+                    print("="*70)
                     
                     # Parse output
                     if framework == 'pytest':
@@ -516,6 +642,12 @@ def run_tests(
                     total_failed += parsed.get('tests_failed', 0)
                     total_tests += parsed.get('tests_run', 0)
                     
+                    # Display parsed summary
+                    if result.returncode == 0:
+                        print(f"✅ SUCCESS: {parsed.get('tests_passed', 0)} test(s) passed")
+                    else:
+                        print(f"❌ FAILED: {parsed.get('tests_failed', 0)} test(s) failed, {parsed.get('tests_passed', 0)} passed")
+                    
                     all_results.append({
                         "test_file": os.path.basename(test_file),
                         "command": cmd_str,
@@ -527,6 +659,9 @@ def run_tests(
                     })
                     
                 except subprocess.TimeoutExpired:
+                    print("\n" + "="*70)
+                    print("❌ ERROR: Test execution timed out (300s limit)")
+                    print("="*70)
                     all_results.append({
                         "test_file": os.path.basename(test_file),
                         "command": cmd_str,
@@ -534,6 +669,9 @@ def run_tests(
                         "error": "Test execution timed out"
                     })
                 except Exception as e:
+                    print("\n" + "="*70)
+                    print(f"❌ ERROR: {str(e)}")
+                    print("="*70)
                     all_results.append({
                         "test_file": os.path.basename(test_file),
                         "command": cmd_str,
@@ -543,6 +681,20 @@ def run_tests(
             
             # Return aggregated results
             overall_success = total_failed == 0 and total_tests > 0
+            
+            # Print final summary
+            print("\n" + "="*70)
+            print("FINAL SUMMARY")
+            print("="*70)
+            print(f"Total Files Tested: {len(test_files)}")
+            print(f"Total Tests Run: {total_tests}")
+            print(f"✅ Passed: {total_passed}")
+            print(f"❌ Failed: {total_failed}")
+            if overall_success:
+                print("\n🎉 ALL TESTS PASSED!")
+            else:
+                print(f"\n⚠️  {total_failed} TEST(S) FAILED")
+            print("="*70)
             
             return {
                 "success": overall_success,

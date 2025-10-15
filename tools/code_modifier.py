@@ -24,6 +24,7 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     Call gemini-cli with a prompt and return the JSON response.
     
     This follows the same pattern as agent.py for consistency.
+    Uses file redirection to avoid output truncation issues.
     
     Args:
         prompt: The prompt to send to Gemini
@@ -35,39 +36,59 @@ def _call_gemini(prompt: str, cwd: Optional[str] = None) -> str:
     Raises:
         CodeModificationError: If the call fails
     """
+    import tempfile
+    
     try:
-        result = subprocess.run(
-            ['gemini', '-m', 'gemini-2.5-flash', '-p', prompt, '--output-format', 'json'],
-            capture_output=True,
-            text=True,
-            timeout=120,  # 2 minute timeout
-            cwd=cwd
-        )
+        # Create temporary file for output (avoids truncation)
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
         
-        if result.returncode != 0:
-            raise CodeModificationError(f"Gemini CLI error: {result.stderr}")
-        
-        # Parse the gemini-cli JSON wrapper
-        gemini_output = json.loads(result.stdout.strip())
-        response_text = gemini_output.get('response', '')
-        
-        print(f"Gemini CLI response received ({len(response_text)} chars)")
-        
-        # Remove markdown code blocks if present
-        if '```json' in response_text:
-            # Extract JSON from markdown code blocks
-            start = response_text.find('```json') + 7
-            end = response_text.rfind('```')
-            if start > 6 and end > start:
-                response_text = response_text[start:end].strip()
-        elif '```' in response_text:
-            # Handle generic code blocks
-            start = response_text.find('```') + 3
-            end = response_text.rfind('```')
-            if start > 2 and end > start:
-                response_text = response_text[start:end].strip()
-        
-        return response_text
+        try:
+            # Run gemini-cli with output redirected to file
+            # This avoids terminal rendering truncation issues
+            cmd = f'gemini -m gemini-2.5-flash -p {json.dumps(prompt)} --output-format json > {tmp_path}'
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=cwd,
+                timeout=1200,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                raise CodeModificationError(f"Gemini CLI error: {result.stderr}")
+            
+            # Read the complete output from file
+            with open(tmp_path, 'r') as f:
+                output = f.read()
+            
+            # Parse the gemini-cli JSON wrapper
+            gemini_output = json.loads(output.strip())
+            response_text = gemini_output.get('response', '')
+            print(f"Gemini CLI response received ({len(response_text)} chars)")
+            
+            # Remove markdown code blocks if present
+            if '```json' in response_text:
+                # Extract JSON from markdown code blocks
+                start = response_text.find('```json') + 7
+                end = response_text.rfind('```')
+                if start > 6 and end > start:
+                    response_text = response_text[start:end].strip()
+            elif '```' in response_text:
+                # Handle generic code blocks
+                start = response_text.find('```') + 3
+                end = response_text.rfind('```')
+                if start > 2 and end > start:
+                    response_text = response_text[start:end].strip()
+            
+            return response_text
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         
     except subprocess.TimeoutExpired:
         raise CodeModificationError("Gemini CLI request timed out")
@@ -197,14 +218,18 @@ def modify_code(
     dry_run: bool = False
 ) -> Dict[str, Any]:
     """
-    Modify code files based on natural language instructions.
+    Modify code files based on natural language instructions using a two-step AI process.
     
-    This agent directly modifies files instead of generating diffs.
-    It uses AI to understand the changes needed and applies them directly.
+    This agent uses a two-step approach:
+    1. Ask AI to identify which files need changes
+    2. For each file, ask AI to generate the new content
+    3. Write all modified files to disk
+    
+    This approach provides better accuracy and handles larger codebases more effectively.
     
     Args:
         prompt: Natural language description of changes to make
-        file_paths: List of files to modify (can be relative or absolute)
+        file_paths: List of files to analyze (can be relative or absolute)
         base_directory: Base directory for resolving relative paths
         create_backup: Whether to create backups before modifying
         dry_run: If True, don't actually modify files (just show what would change)
@@ -214,6 +239,7 @@ def modify_code(
         {
             "success": bool,
             "files_modified": int,
+            "changed_files": List[str],  # List of files that were changed
             "changes": [
                 {
                     "file": str,
@@ -232,6 +258,7 @@ def modify_code(
             "success": False,
             "error": "Prompt cannot be empty",
             "files_modified": 0,
+            "changed_files": [],
             "changes": []
         }
     
@@ -240,6 +267,7 @@ def modify_code(
             "success": False,
             "error": "No files specified",
             "files_modified": 0,
+            "changed_files": [],
             "changes": []
         }
     
@@ -251,51 +279,36 @@ def modify_code(
             "success": False,
             "error": f"Error building file context: {str(e)}",
             "files_modified": 0,
+            "changed_files": [],
             "changes": []
         }
     
-    # Build prompt for AI
-    ai_prompt = f"""You are an expert software engineer. Modify the provided code files based on the user's instructions.
+    # STEP 1: Ask Gemini to identify which files need to be changed
+    identify_prompt = f"""You are an expert software engineer. Analyze the requirements and identify which files need to be changed.
 
-USER INSTRUCTIONS:
+REQUIREMENTS:
 {prompt}
 
-CURRENT CODE:
+CURRENT CODE FILES:
 {file_context}
 
-TASK:
-For each file that needs changes, provide the COMPLETE new file content.
+YOUR TASK:
+Analyze the requirements and determine which files need to be modified to implement them.
 
-Return a JSON object with this structure:
+Return ONLY a JSON object with the list of files that need changes:
 {{
-  "files": [
-    {{
-      "path": "relative/path/to/file",
-      "new_content": "complete new file content here"
-    }}
-  ]
+  "changed_files": ["relative/path/file1.py", "relative/path/file2.js"]
 }}
 
-IMPORTANT:
-- Return ONLY valid JSON, no additional text or markdown
-- Include COMPLETE file content, not just changes
-- Preserve formatting, indentation, and code style
-- Make minimal, focused changes that address the instructions
-- Ensure code is syntactically correct
-- Omit files that don't need changes
-- CRITICAL: Ensure the JSON is properly formatted:
-  * Escape newlines in code as \\n
-  * Escape tabs as \\t
-  * Escape backslashes as \\\\
-  * Escape double quotes as \\"
-  * The "new_content" field must be a valid JSON string
-
-Generate the modifications:
+RULES:
+- Return ONLY valid JSON, no explanations
+- List only files that actually need modification
+- Use relative paths as shown in the code files above
 """
     
-    # Call Gemini
+    # Call Gemini to identify files
     try:
-        response_text = _call_gemini(ai_prompt, cwd=base_directory)
+        response_text = _call_gemini(identify_prompt, cwd=base_directory)
         
         # Parse JSON response
         start = response_text.find('{')
@@ -304,62 +317,136 @@ Generate the modifications:
         if start == -1 or end <= start:
             return {
                 "success": False,
-                "error": "Invalid JSON response from AI",
+                "error": "Invalid JSON response from AI (identify step)",
                 "files_modified": 0,
+                "changed_files": [],
                 "changes": []
             }
         
         json_str = response_text[start:end]
         
-        # Try to parse JSON with better error handling
         try:
-            modifications = json.loads(json_str)
+            identification = json.loads(json_str)
         except json.JSONDecodeError as e:
-            # Log the problematic JSON for debugging
-            print(f"JSON Parse Error: {e}")
-            print(f"Problematic JSON (first 500 chars): {json_str[:500]}")
-            
-            # Try to fix common issues with escape sequences
-            # This is a workaround for AI responses with improperly escaped strings
             try:
-                # Attempt to use strict=False to be more lenient
-                modifications = json.loads(json_str, strict=False)
+                identification = json.loads(json_str, strict=False)
             except:
                 return {
                     "success": False,
-                    "error": f"Failed to parse AI response: {str(e)}. Response preview: {json_str[:200]}",
+                    "error": f"Failed to parse file identification: {str(e)}",
                     "files_modified": 0,
-                    "changes": [],
-                    "raw_response": json_str[:500]
+                    "changed_files": [],
+                    "changes": []
                 }
         
-        files_to_modify = modifications.get('files', [])
+        changed_files_list = identification.get('changed_files', [])
         
-        if not files_to_modify:
+        if not changed_files_list:
             return {
                 "success": True,
                 "message": "No changes needed",
                 "files_modified": 0,
+                "changed_files": [],
                 "changes": []
             }
         
-    except json.JSONDecodeError as e:
-        return {
-            "success": False,
-            "error": f"Failed to parse AI response: {str(e)}",
-            "files_modified": 0,
-            "changes": [],
-            "raw_response": response_text[:500] if 'response_text' in locals() else "N/A"
-        }
+        print(f"Files to modify: {', '.join(changed_files_list)}")
+        
+        # STEP 2: For each file, generate the new content
+        files_to_modify = []
+        
+        for file_path in changed_files_list:
+            # Get absolute path for reading
+            if not os.path.isabs(file_path):
+                abs_file_path = os.path.join(base_directory, file_path)
+            else:
+                abs_file_path = file_path
+            
+            # Read current file content
+            current_content = read_file_content(abs_file_path)
+            
+            # Ask Gemini to generate new content for this specific file
+            generate_prompt = f"""You are an expert software engineer. Generate the modified content for a specific file.
+
+REQUIREMENTS:
+{prompt}
+
+FILE TO MODIFY: {file_path}
+
+CURRENT CONTENT:
+```
+{current_content}
+```
+
+YOUR TASK:
+Implement the required changes for this file and return the COMPLETE updated file content.
+
+Return ONLY a JSON object:
+{{
+  "new_content": "complete updated file content here"
+}}
+
+CRITICAL RULES:
+- Return ONLY valid JSON (no markdown, no explanations)
+- Provide COMPLETE file content (not diffs or snippets)
+- Preserve code style, formatting, and indentation
+- Ensure code is syntactically correct
+- Properly escape JSON: \\n for newlines, \\t for tabs, \\\\ for backslashes, \\" for quotes
+"""
+            
+            print(f"Generating new content for: {file_path}")
+            file_response = _call_gemini(generate_prompt, cwd=base_directory)
+            
+            # Parse the file content response
+            start = file_response.find('{')
+            end = file_response.rfind('}') + 1
+            
+            if start != -1 and end > start:
+                json_str = file_response[start:end]
+                try:
+                    file_data = json.loads(json_str)
+                    files_to_modify.append({
+                        'path': file_path,
+                        'new_content': file_data.get('new_content', '')
+                    })
+                except json.JSONDecodeError as e:
+                    try:
+                        file_data = json.loads(json_str, strict=False)
+                        files_to_modify.append({
+                            'path': file_path,
+                            'new_content': file_data.get('new_content', '')
+                        })
+                    except:
+                        print(f"Warning: Failed to parse content for {file_path}: {e}")
+                        continue
+        
+        if not files_to_modify:
+            return {
+                "success": False,
+                "error": "Failed to generate content for any files",
+                "files_modified": 0,
+                "changed_files": changed_files_list,
+                "changes": []
+            }
+        
     except CodeModificationError as e:
         return {
             "success": False,
             "error": str(e),
             "files_modified": 0,
+            "changed_files": [],
+            "changes": []
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}",
+            "files_modified": 0,
+            "changed_files": [],
             "changes": []
         }
     
-    # Apply modifications
+    # STEP 3: Apply modifications to disk
     changes = []
     files_modified = 0
     
@@ -421,6 +508,7 @@ Generate the modifications:
     return {
         "success": files_modified > 0,
         "files_modified": files_modified,
+        "changed_files": changed_files_list if changed_files_list else [c["file"] for c in changes if c.get("status") in ["modified", "created"]],
         "changes": changes,
         "message": f"Modified {files_modified} file(s)"
     }
