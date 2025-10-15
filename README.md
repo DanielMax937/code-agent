@@ -7,7 +7,7 @@ An intelligent code analysis and testing agent powered by Google's Gemini AI. Th
 > **⚠️ IMPORTANT NOTICE**  
 > **Network access to Google Gemini API is required** for this application to function. Ensure your environment has:
 > - Active internet connection
-> - Access to Google AI services (api.google.com)
+> - Access to Google AI services
 > - Valid Gemini API key configured
 > - No firewall blocking Google API endpoints
 

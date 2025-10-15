@@ -7,7 +7,7 @@
 > **⚠️ 重要提示**  
 > **本应用需要网络访问 Google Gemini API 才能正常运行**。请确保您的环境满足：
 > - 有效的互联网连接
-> - 可以访问 Google AI 服务 (api.google.com)
+> - 可以访问 Google AI 服务
 > - 已配置有效的 Gemini API 密钥
 > - 防火墙未阻止 Google API 端点
 
